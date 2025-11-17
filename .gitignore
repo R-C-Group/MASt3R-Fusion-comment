@@ -7,3 +7,5 @@
 # temp*
 # # thirdparty*
 # evo*
+*.so
+checkpoints/*
