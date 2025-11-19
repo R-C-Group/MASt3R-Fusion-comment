@@ -9,3 +9,6 @@
 # evo*
 *.so
 checkpoints/*
+*.zip
+dataset/*
+*.pyc
