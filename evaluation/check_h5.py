@@ -94,8 +94,10 @@ if __name__ == "__main__":
             id_poses[i] = dd['T_WC'][-1,:]
             h,w = dd['uimg'].shape[:2]
 
+    h = 176
+    w = 512
 
-    keyframes = SharedKeyframes(manager, h, w,buffer=1024)
+    keyframes = SharedKeyframes(manager, h, w,buffer=1024) 
     states = SharedStates(manager, h, w)
     K = torch.from_numpy(dataset.camera_intrinsics.K_frame).to(
                 device, dtype=torch.float32

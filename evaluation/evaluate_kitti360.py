@@ -94,12 +94,12 @@ if __name__ == '__main__':
     color_list = [[0,0,1],[1,0.6,1],[1,0,0]]
     plt.figure('1',figsize=[6,6])
     parser = argparse.ArgumentParser()
-    parser.add_argument('--seq', type=str, help='seq',default='0005')
+    parser.add_argument('--seq', type=str, help='seq',default='0000')
     parser.add_argument('--kf_only', type=bool, default = False)
     args = parser.parse_args()
     args.subcommand = 'tum'
     seq = args.seq
-    args.ref_file = '/mnt/nas/Dataset/KITTI-360/2013_05_28_drive_%s_sync/gt_local.txt' % seq
+    args.ref_file = '/home/guanweipeng/MASt3R-Fusion/dataset/kitti360_imu_gt_camstamp/2013_05_28_drive_%s_sync/gt_local.txt' % seq
     args.pose_relation = 'trans_part'
     args.align = True
     args.correct_scale = False

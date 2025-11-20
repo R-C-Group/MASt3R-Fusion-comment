@@ -9,7 +9,6 @@
   </h3>
   <div align="center"></div>
 
-<br>
 
 ## 实验配置
 

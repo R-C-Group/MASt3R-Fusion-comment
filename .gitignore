@@ -1,9 +1,9 @@
 # *.pt
-# *.h5
-# *.pkl
+*.h5
+*.pkl
 # *.npz
-# *.log
-# *.txt
+*.log
+*.txt
 # temp*
 # # thirdparty*
 # evo*
