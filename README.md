@@ -93,9 +93,17 @@ conda activate mast3r_fusion
 pip install --no-build-isolation -e thirdparty/mast3r
 
 pip install -e thirdparty/in3d
+
+# torchcodec的安装
+git clone https://github.com/pytorch/torchcodec
+cd torchcodec
+# 确保你在对应的虚拟环境下
+export I_CONFIRM_THIS_IS_NOT_A_LICENSE_VIOLATION=1
+pip install . --no-build-isolation
+# python -c "import torchcodec; print(f'Version: {torchcodec.__version__}'); from torchcodec import decoders; print('Decoders module: FOUND')"
+
 pip install --no-build-isolation -e .
 # pyproject.toml中去掉了pyrealsense2，这是RealSense 相机的依赖
-pip install torchcodec==0.0.0.dev0
 ```
 
 * 查看系统架构`python -c "import torch; print(torch.cuda.get_device_capability())"`,Thor为`(11，0)`
@@ -113,26 +121,6 @@ wget https://download.europe.naverlabs.com/ComputerVision/MASt3R/MASt3R_ViTLarge
   * 首先，需要下载KITTI的`Perspective Images for Train & Val (128G)`。运行`cd dataset && bash download_2d_perspective_unrectified.sh`来下载；
   * 其次，还需下载预备的IMU及GT数据：[Google Drive](https://drive.google.com/file/d/1BO8zGvoey7IdwbWXmAdlhGPr6hiCFJ6Y/view?usp=drive_link)
 
-* 对于KITTI数据集下载，可能链接不上，采用如下方式：
-
-```bash
-# 为kitti数据所存放的亚马逊网站指定IP地址
-echo '52.219.169.53    s3.eu-central-1.amazonaws.com' | sudo tee -a /etc/hosts
-```
-
-* 若出现报错`start of libtorchcodec loading traceback,系统找不到 libavutil.so.59、libavutil.so.58、libavutil.so.57 等文件。`
-
-```bash
-sudo apt install ffmpeg libavcodec-extra
-
-#检查安装的结果
-ffmpeg -version
-ldconfig -p | grep libavutil
-
-#注意支持的FFmpeg版本，建议安装6.0
-#conda install ffmpeg=6.0 -c conda-forge
-```
-
 
 运行下面测试：
 
@@ -140,29 +128,13 @@ ldconfig -p | grep libavutil
 conda activate mast3r_fusion
 
 bash batch_kitti360_vi.sh # for real-time SLAM
-bash batch_kitti360_loop.sh # for global optimization
-
-#此外也可以选择下面的全指令方式 
-python main.py \
-        --dataset "${base_dataset_path}/2013_05_28_drive_0000_sync/image_00/data_rgb" \
-        --config "config/base_kitti360.yaml" \
-        --calib "config/intrinsics_kitti360.yaml" \
-        --imu_path "${base_dataset_path}/2013_05_28_drive_0000_sync/imu.txt" \
-        --imu_dt -0.04 \ # constant V-I time offset for KITTI-360  
-        --stamp_path "${base_dataset_path}/2013_05_28_drive_0000_sync/camstamp.txt" \
-        --result_path "result.txt" \
-        --save_h5 \
-        --no-viz # for realtime visualization, comment this line 
-
-# real-time SLAM没有回环
-python main.py \
-        --dataset "${base_dataset_path}/2013_05_28_drive_0000_sync/image_00/data_rgb" \
-        --config "config/base_kitti360.yaml" \
-        --calib "config/intrinsics_kitti360.yaml" \
-        --imu_path "${base_dataset_path}/2013_05_28_drive_0000_sync/imu.txt" \
-        --imu_dt -0.04 \ # constant V-I time offset for KITTI-360  
-        --stamp_path "${base_dataset_path}/2013_05_28_drive_0000_sync/camstamp.txt" \
-        --result_path "result.txt" \
-        --save_h5 \
-        --no-viz # for realtime visualization, comment this line 
 ```
+
+测试效果如图所示
+
+<div align="center">
+  <img src="assets/Screenshot from 2026-01-19 15-46-54.png" width="90%" />
+  <img src="assets/Screenshot from 2026-01-19 15-47-19.png" width="90%" />
+<figcaption>  
+</figcaption>
+</div>

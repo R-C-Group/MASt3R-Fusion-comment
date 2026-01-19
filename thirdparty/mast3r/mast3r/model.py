@@ -4,6 +4,7 @@
 # --------------------------------------------------------
 # MASt3R model class
 # --------------------------------------------------------
+import argparse
 import torch
 import torch.nn.functional as F
 import os
@@ -21,6 +22,7 @@ inf = float('inf')
 def load_model(model_path, device, verbose=True):
     if verbose:
         print('... loading model from', model_path)
+    torch.serialization.add_safe_globals([argparse.Namespace]) # 允许 Namespace 进入白名单（推荐）
     ckpt = torch.load(model_path, map_location='cpu')
     args = ckpt['args'].model.replace("ManyAR_PatchEmbed", "PatchEmbedDust3R")
     if 'landscape_only' not in args:

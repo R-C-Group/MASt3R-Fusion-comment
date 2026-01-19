@@ -4,7 +4,12 @@ import cv2
 from natsort import natsorted
 import numpy as np
 import torch
-import pyrealsense2 as rs
+# import pyrealsense2 as rs
+try:
+    import pyrealsense2 as rs
+except ImportError:
+    rs = None
+    print("Warning: pyrealsense2 not found. RealSense-related functions will be disabled.")
 import yaml
 
 from mast3r_fusion.mast3r_utils import resize_img

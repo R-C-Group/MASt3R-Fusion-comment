@@ -11,4 +11,5 @@
 checkpoints/*
 *.zip
 dataset/KITTI*
+dataset/kitti*
 *.pyc

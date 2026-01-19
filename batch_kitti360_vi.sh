@@ -1,15 +1,14 @@
 #!/bin/bash
 
-
 # base_dataset_path="/mnt/nas/Dataset/KITTI-360"
-base_dataset_path="/home/guanweipeng/MASt3R-Fusion/dataset/KITTI-360/data_2d_raw"
-base_dataset_path_modified="/home/guanweipeng/MASt3R-Fusion/dataset/kitti360_imu_gt_camstamp"
+base_dataset_path="/home/kwanwaipang/MASt3R-Fusion-comment/dataset/KITTI-360/data_2d_raw"
+base_dataset_path_modified="/home/kwanwaipang/MASt3R-Fusion-comment/dataset/kitti360_imu_gt_camstamp"
 config_file="config/base_kitti360.yaml"
 calib_file="config/intrinsics_kitti360.yaml"
 imu_dt="-0.04"
 
 # for folder in 0000 0002 0003 0004 0005 0006 0009 0010; do
-for folder in 0000; do
+for folder in 0010; do
     GPU_ID=0
     echo "Using GPU $GPU_ID for sequence $folder"
 
@@ -21,8 +20,8 @@ for folder in 0000; do
         --imu_dt "$imu_dt" \
         --stamp_path "${base_dataset_path_modified}/2013_05_28_drive_${folder}_sync/camstamp.txt" \
         --result_path "result_${folder}.txt" \
-        --save_h5
-        #--no-viz   # uncomment this for headless mode
+        --save_h5 # \
+        # --no-viz   # uncomment this for headless mode
     mv graph.pkl graph_${folder}.pkl
     mv data.h5 data_${folder}.h5
 done
