@@ -8,11 +8,12 @@ version = "0.0.1"
 dependencies = [
     "numpy==1.26.4",
     "einops",
-    "pyrealsense2",
+    # "pyrealsense2",
     "evo",
     "natsort",
     "pykdtree",
-    "torchcodec==0.1",
+    # "torchcodec==0.1",
+    "torchcodec>=0.0.0.dev0",
     "lietorch @ git+ssh://git@github.com/princeton-vl/lietorch.git",
     "plyfile",
 ]

@@ -1,4 +1,4 @@
- <h1 align="center"> MASt3R-Fusion测试
+ <h1 align="center"> MASt3R-Fusion测试(基于NAVIDA Thor)
   </h1>
 
 
@@ -16,12 +16,13 @@
 
 ```bash
 # rm -rf .git
-git clone https://github.com/R-C-Group/MASt3R-Fusion-comment.git --recursive
+git clone git@github.com:R-C-Group/MASt3R-Fusion-comment.git --recursive
 
 conda create -n mast3r_fusion python=3.11.9
 conda activate mast3r_fusion
 # conda remove --name mast3r_fusion --all
-pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu124
+# pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu124
+pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu130
 pip install opencv-python==4.10.0.84 opencv-contrib-python==4.10.0.84
 pip install h5py pyparsing
 ```
@@ -36,17 +37,24 @@ git clone git@github.com:yuxuanzhou97/gtsam.git
 cd gtsam
 # cd .. && rm -rf build/
 mkdir build && cd build
-cmake .. -DGTSAM_BUILD_PYTHON=1 -DGTSAM_PYTHON_VERSION=3.11.9 -DPYTHON_EXECUTABLE=`which python` -Dpybind11_INCLUDE_DIR=$PYBIND11_INCLUDE_DIR
+# cmake .. -DGTSAM_BUILD_PYTHON=1 -DGTSAM_PYTHON_VERSION=3.11.9 -DPYTHON_EXECUTABLE=`which python` -Dpybind11_INCLUDE_DIR=$PYBIND11_INCLUDE_DIR
+cmake .. \
+  -DGTSAM_BUILD_PYTHON=1 \
+  -DGTSAM_PYTHON_VERSION=3.11.9 \
+  -DPYTHON_EXECUTABLE=`which python` \
+  -Dpybind11_INCLUDE_DIR=$PYBIND11_INCLUDE_DIR \
+  -DGTSAM_BUILD_WITH_SERIALIZATION=OFF \
+  -DGTSAM_PYTHON_BUILD_WITH_SERIALIZATION=OFF \
+  -DGTSAM_BUILD_UNSTABLE=OFF \
+  -DCMAKE_CXX_STANDARD=17
+
 make python-install -j12
 ```
 
-* 可能会出现调用`/usr/include/pybind11/`等问题，需要安装最新版的pybind11，并精准CMake配置
+* 可能会出现调用`/usr/include/pybind11/`等问题，需要安装最新版的pybind11，然后重新运行。
 
 ```bash
 pip install --upgrade pybind11
-
-cd gtsam
-rm -rf build
 
 # 获取详细的 pybind11 信息
 PYBIND11_INCLUDE_DIR=$(python -c "import pybind11; print(pybind11.get_include())")
@@ -55,42 +63,42 @@ PYBIND11_CMAKE_DIR=$(python -c "import pybind11; import os; print(os.path.join(p
 echo "Pybind11 include: $PYBIND11_INCLUDE_DIR"
 echo "Pybind11 cmake: $PYBIND11_CMAKE_DIR"
 
-mkdir build && cd build
-cmake .. \
-  -DGTSAM_BUILD_PYTHON=1 \
-  -DGTSAM_PYTHON_VERSION=3.11.9 \
-  -DPYTHON_EXECUTABLE=$(which python) \
-  -Dpybind11_DIR=$PYBIND11_CMAKE_DIR \
-  -DCMAKE_PREFIX_PATH=$CONDA_PREFIX \
-  -DCMAKE_INCLUDE_PATH=$PYBIND11_INCLUDE_DIR
-
-make python-install -j12
 ```
 
-<div align="center">
-  <img src="./assets/微信截图_20251117143915.png" width="80%" />
-<figcaption>  
-</figcaption>
-</div>
+* GCC13编译问题：GCC 13 与 Boost Serialization 库在处理 std::optional 时的兼容性问题。GCC 13 更加严格地执行 C++17 标准，而 GTSAM 中某些序列化的模板推导在遇到 boost::serialization 的前向声明（即报错中的 struct boost::serialization::U）时，无法正确解析。
+
+```bash
+sudo apt install gcc-11 g++-11
+
+# 查看gcc版本
+gcc --version #出现的是默认版本
+gcc-11 --version #出现新安装版本
+
+cmake .. \
+  -DCMAKE_C_COMPILER=gcc-11 \
+  -DCMAKE_CXX_COMPILER=g++-11 \
+  -DGTSAM_BUILD_PYTHON=1 \
+  -DGTSAM_PYTHON_VERSION=3.11.9 \
+  -DPYTHON_EXECUTABLE=`which python` \
+  -Dpybind11_INCLUDE_DIR=$PYBIND11_INCLUDE_DIR
+```
+
 
 * 工程安装：
 
 ```bash
-cd MASt3R-Fusion/
+cd {根目录}
+conda activate mast3r_fusion
 # pip install -e thirdparty/mast3r
 pip install --no-build-isolation -e thirdparty/mast3r
 
 pip install -e thirdparty/in3d
 pip install --no-build-isolation -e .
+# pyproject.toml中去掉了pyrealsense2，这是RealSense 相机的依赖
+pip install torchcodec==0.0.0.dev0
 ```
 
-* 对于`pip install --no-build-isolation -e .`涉及到lietorch的安装可能出现超时的问题，做出改进如下：
-
-~~~
-"lietorch @ git+https://github.com/princeton-vl/lietorch.git",
-或者替换为：
-"lietorch @ git+ssh://git@github.com/princeton-vl/lietorch.git",
-~~~
+* 查看系统架构`python -c "import torch; print(torch.cuda.get_device_capability())"`,Thor为`(11，0)`
 
 * 下载权重文件
 
@@ -102,7 +110,7 @@ wget https://download.europe.naverlabs.com/ComputerVision/MASt3R/MASt3R_ViTLarge
 ```
 
 * 下载KITTI-360数据集：
-  * 首先，需要下载KITTI的`Perspective Images for Train & Val (128G)`。运行`bash download_2d_perspective_unrectified.sh`来下载；
+  * 首先，需要下载KITTI的`Perspective Images for Train & Val (128G)`。运行`cd dataset && bash download_2d_perspective_unrectified.sh`来下载；
   * 其次，还需下载预备的IMU及GT数据：[Google Drive](https://drive.google.com/file/d/1BO8zGvoey7IdwbWXmAdlhGPr6hiCFJ6Y/view?usp=drive_link)
 
 * 对于KITTI数据集下载，可能链接不上，采用如下方式：
