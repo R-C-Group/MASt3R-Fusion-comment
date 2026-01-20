@@ -13,3 +13,5 @@ checkpoints/*
 dataset/KITTI*
 dataset/kitti*
 *.pyc
+# thirdparty/in3d/thirdparty/pyimgui/doc/source/visual_examples/*
+thirdparty/in3d/thirdparty/pyimgui/doc/source/visual_examples/*
