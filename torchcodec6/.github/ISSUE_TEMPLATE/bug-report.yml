@@ -1,0 +1,46 @@
+name: 🐛 Bug Report
+description: Create a report to help us reproduce and fix the bug
+
+body:
+- type: markdown
+  attributes:
+    value: >
+      #### Your bug may have already been reported! Please check [the existing and past issues](https://github.com/pytorch/torchcodec/issues?q=sort%3Aupdated-desc+is%3Aissue).
+- type: textarea
+  attributes:
+    label: 🐛 Describe the bug
+    description: |
+      What broke? What behavior did you see versus what did you expect? Please provide any relevant code, error messages and exception tracebacks.
+
+      A minimal code example will help us help you faster! The ideal code example is a small chunk of code that we can copy-paste to see the same error you see. For example:
+
+      ```python
+      # All necessary imports at the beginning
+      import torch
+      import torchcodec
+      from torchcodec.decoders import VideoDecoder
+
+      # A succinct reproducing example trimmed down to the essential parts:
+      decoder = VideoDecoder("path/to/video.mp4")  # Help! This fails!
+      # ...
+      ```
+
+      If the code is long, put it in a public gist and link it in the issue: https://gist.github.com. Please also paste any error messages and full exception tracebacks in ```` ```triple quotes blocks``` ````.
+  validations:
+    required: true
+- type: textarea
+  attributes:
+    label: Versions
+    description: |
+      We support a wide variety of platforms and versions, and many bugs are verison-dependent. Knowing your setup will help us help you faster! Please run the following and paste the output below.
+      ```sh
+      wget https://raw.githubusercontent.com/pytorch/pytorch/main/torch/utils/collect_env.py
+      # For security purposes, please check the contents of collect_env.py before running it.
+      python collect_env.py
+      ```
+  validations:
+    required: true
+- type: markdown
+  attributes:
+    value: >
+      Thanks for contributing 🎉!

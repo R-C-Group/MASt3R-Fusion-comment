@@ -1,0 +1,91 @@
+import os
+import random
+
+import pytest
+import torch
+
+from .utils import in_fbcode
+
+
+def pytest_configure(config):
+    # register an additional marker (see pytest_collection_modifyitems)
+    config.addinivalue_line(
+        "markers", "needs_cuda: mark for tests that rely on a CUDA device"
+    )
+    config.addinivalue_line(
+        "markers", "needs_ffmpeg_cli: mark for tests that rely on ffmpeg"
+    )
+
+
+def pytest_collection_modifyitems(items):
+    # This hook is called by pytest after it has collected the tests (google its
+    # name to check out its doc!). We can ignore some tests as we see fit here,
+    # or add marks, such as a skip mark.
+
+    out_items = []
+    for item in items:
+        # The needs_cuda mark will exist if the test was explicitly decorated
+        # with the @needs_cuda decorator. It will also exist if it was
+        # parametrized with a parameter that has the mark: for example if a test
+        # is parametrized with
+        # @pytest.mark.parametrize('device', all_supported_devices())
+        # the "instances" of the tests where device == 'cuda' will have the
+        # 'needs_cuda' mark, and the ones with device == 'cpu' won't have the
+        # mark.
+        needs_cuda = item.get_closest_marker("needs_cuda") is not None
+        needs_ffmpeg_cli = item.get_closest_marker("needs_ffmpeg_cli") is not None
+        has_skip_marker = item.get_closest_marker("skip") is not None
+
+        # For skipif, the marker is always present regardless of whether the
+        # condition is True or False, so we must check the actual condition.
+        skipif_condition_is_true = any(
+            skipif_marker.args[0] for skipif_marker in item.iter_markers("skipif")
+        )
+
+        # If we need to conditionally skip tests based on a dependency, we should follow
+        # the decorator pattern used by needs_cuda and needs_ffmpeg_cli:
+        #   1. Define a custom marker in pytest_configure() above
+        #   2. Create a decorator function in utils.py (e.g., @needs_my_dependency)
+        #   3. Handle the marker here in pytest_collection_modifyitems()
+        # This keeps our skip logic centralized
+
+        if in_fbcode():
+            # fbcode doesn't like skipping tests, so instead we just don't collect the test
+            # so that they don't even "exist", hence the continue statements.
+            if needs_ffmpeg_cli or has_skip_marker or skipif_condition_is_true:
+                continue
+
+        if (
+            needs_cuda
+            and not torch.cuda.is_available()
+            and os.environ.get("FAIL_WITHOUT_CUDA") is None
+        ):
+            # We skip CUDA tests on non-CUDA machines, but only if the
+            # FAIL_WITHOUT_CUDA env var wasn't set. If it's set, the test will
+            # typically fail with a "Unsupported device: cuda" error. This is
+            # normal and desirable: this env var is set on CI jobs that are
+            # supposed to run the CUDA tests, so if CUDA isn't available on
+            # those for whatever reason, we need to know.
+            item.add_marker(pytest.mark.skip(reason="CUDA not available."))
+
+        out_items.append(item)
+
+    items[:] = out_items
+
+
+@pytest.fixture(autouse=True)
+def prevent_leaking_rng():
+    # Prevent each test from leaking the rng to all other test when they call
+    # torch.manual_seed() or random.seed().
+
+    torch_rng_state = torch.get_rng_state()
+    builtin_rng_state = random.getstate()
+    if torch.cuda.is_available():
+        cuda_rng_state = torch.cuda.get_rng_state()
+
+    yield
+
+    torch.set_rng_state(torch_rng_state)
+    random.setstate(builtin_rng_state)
+    if torch.cuda.is_available():
+        torch.cuda.set_rng_state(cuda_rng_state)

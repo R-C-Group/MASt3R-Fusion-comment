@@ -1,0 +1,22 @@
+name: 🚀 Feature request
+description: Submit a proposal/request for a new TorchCodec feature
+
+body:
+- type: textarea
+  attributes:
+    label: 🚀 The feature
+    description: >
+      What new functionality do you want?
+  validations:
+    required: true
+- type: textarea
+  attributes:
+    label: Motivation, pitch
+    description: >
+      Why do you want it? If this is related to another GitHub issue, please link that here.
+  validations:
+    required: false
+- type: markdown
+  attributes:
+    value: >
+      Thanks for contributing 🎉!

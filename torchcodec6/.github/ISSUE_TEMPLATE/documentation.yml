@@ -1,0 +1,15 @@
+name: 📚 Documentation
+description: Report an issue related to the TorchCodec documentation
+
+body:
+- type: textarea
+  attributes:
+    label: 📚 The doc issue
+    description: >
+      Is something confusing or wrong? Let us know! Please provide URLs to the content in https://pytorch.org/torchcodec/stable/index.html that you're referring to.
+  validations:
+    required: true
+- type: markdown
+  attributes:
+    value: >
+      Thanks for contributing 🎉!
