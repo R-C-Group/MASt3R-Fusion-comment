@@ -1,0 +1,33 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Sequence 0010",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "main.py", // 对应脚本中的 python main.py
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "env": {
+                "CUDA_VISIBLE_DEVICES": "0",
+                "OMP_NUM_THREADS": "4",
+                "MKL_NUM_THREADS": "4",
+                "PYTHONPATH": "${workspaceFolder}" // 确保能找到项目模块
+            },
+            "args": [
+                "--dataset", "/home/kwanwaipang/MASt3R-Fusion-comment/dataset/KITTI-360/data_2d_raw/2013_05_28_drive_0010_sync/image_00/data_rgb",
+                "--config", "config/base_kitti360.yaml",
+                "--calib", "config/intrinsics_kitti360.yaml",
+                "--imu_path", "/home/kwanwaipang/MASt3R-Fusion-comment/dataset/kitti360_imu_gt_camstamp/2013_05_28_drive_0010_sync/imu.txt",
+                "--imu_dt", "-0.04",
+                "--stamp_path", "/home/kwanwaipang/MASt3R-Fusion-comment/dataset/kitti360_imu_gt_camstamp/2013_05_28_drive_0010_sync/camstamp.txt",
+                "--result_path", "result_0010.txt",
+                "--save_h5"
+                , "--no-viz" //uncomment this for headless mode
+            ]
+        }
+    ]
+}
