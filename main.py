@@ -30,12 +30,13 @@ import pickle
 import io
 import h5py
 
+# 从列表b中筛选出对于“a”有效的数字
 def find_valid_numbers(a, b):
     result = []
     for i, c in enumerate(b):
-        if abs(c - a) <= 1:
+        if abs(c - a) <= 1: # 如果数字过于接近（若是当前帧），跳过
             continue 
-        close_indices = [j for j, d in enumerate(b) if abs(d - c) <= 20]
+        close_indices = [j for j, d in enumerate(b) if abs(d - c) <= 20] # 找出所有与c接近的数字，正负20范围内
         if i == min(close_indices) or c == a - 2 :
             result.append(c)
     return result
@@ -129,13 +130,14 @@ def run_backend(states, keyframes):
             idx = states.global_optimizer_tasks.pop(0)
 
 if __name__ == "__main__":
-    mp.set_start_method("spawn", force=True)
+    mp.set_start_method("spawn", force=True) #使用spawn 模式以避免死锁和内存冲突
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.set_grad_enabled(False)
-    device = "cuda:0"
+    device = "cuda:0" #默认了采用设备号0
     save_frames = False
     datetime_now = str(datetime.datetime.now()).replace(" ", "_")
 
+    # 一系列参数的读入
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", default="datasets/tum/rgbd_dataset_freiburg1_desk")
     parser.add_argument("--config", default="config/base.yaml")
