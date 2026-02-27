@@ -1,6 +1,26 @@
 import math
 from math import atan2, sin, cos
 from . import const_value
+"""
+geoFunc/trans.py — 大地坐标变换模块
+
+功能描述:
+    提供多种坐标系之间的变换函数，用于 GNSS 数据处理:
+    
+    坐标系说明:
+    - WGS-84 大地坐标: 经度(lon)、纬度(lat)、海拔(h)
+    - ECEF 坐标: 地心地固坐标系 (X, Y, Z)
+    - ENU 坐标: 东-北-天局部坐标系 (East, North, Up)
+    
+    核心函数:
+    - Pos_LLH_2_ECEF(): 大地坐标 → ECEF
+    - Pos_ECEF_2_LLH(): ECEF → 大地坐标
+    - CalcRne(): 计算 ENU 到 ECEF 的旋转矩阵
+    - Pos_ECEF2ENU(): ECEF → ENU 局部平面坐标
+    - m2att() / att2m(): 旋转矩阵 ↔ 姿态角（航向/俯仰/横滚）
+    - q2m() / m2q(): 四元数 ↔ 旋转矩阵
+"""
+
 import numpy as np
 from scipy.spatial.transform import Rotation
 

@@ -1,3 +1,30 @@
+"""
+visualization.py — 3D 实时可视化模块
+
+功能描述:
+    使用 ModernGL + ImGui 实现 SLAM 系统的 3D 实时可视化。
+    在独立进程中运行，通过共享内存和消息队列与主进程通信。
+    
+    可视化内容:
+    1. 相机视锥体（frustum）— 每个关键帧用线框显示
+    2. 3D 点云 — 关键帧的重建点云
+    3. 因子图边 — 连接关键帧的优化约束
+    4. 当前帧图像 — 实时显示当前处理的图像
+    
+    交互功能:
+    - 鼠标拖拽旋转/平移/缩放视角
+    - ImGui 面板控制:
+      * 暂停/继续
+      * 单步执行
+      * 置信度阈值调节
+      * 点大小调节
+      * 跟随/自由视角切换
+    
+    核心类:
+    - WindowMsg: 可视化窗口消息（暂停、终止、参数等）
+    - run_visualization(): 可视化进程入口函数
+"""
+
 import dataclasses
 import weakref
 from pathlib import Path

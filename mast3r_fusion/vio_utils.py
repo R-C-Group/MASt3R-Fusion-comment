@@ -1,3 +1,31 @@
+"""
+vio_utils.py — 视觉-惯性对齐工具模块
+
+功能描述:
+    实现 V-I（Visual-Inertial）初始化对齐，参考 VINS-Fusion 的经典方法。
+    
+    核心功能:
+    1. VisualIMUAlignment() — V-I 初始化四步法:
+       a. 陀螺仪偏置估计 (solveGyroscopeBias):
+          利用旋转预积分与视觉旋转的一致性约束，线性求解陀螺仪偏置
+       b. 线性对齐 (linearAlignment):
+          构建联立方程组，同时求解每帧速度、重力方向和尺度因子
+       c. 重力精化 (RefineGravity):
+          在重力方向的切平面上迭代修正（4次），约束重力大小为 9.81 m/s²
+       d. 坐标系对齐 (g2R):
+          旋转世界坐标系使 z 轴对齐到重力方向
+    
+    2. coarse_calib_torch() — 粗标定工具（实验性）:
+       通过优化重投影误差估计相机焦距和主点
+    
+    3. keys2str() — GTSAM 变量键值转可读字符串（调试用）
+    
+    关键概念:
+    - IMU 预积分: 将两帧之间的 IMU 测量积分为增量 ΔR, Δv, Δp
+    - 重力方向: 在地球表面，重力方向是唯一可观测的绝对方向
+    - 尺度: 单目视觉系统无法确定绝对尺度，需要通过 IMU 加速度恢复
+"""
+
 import numpy as np
 import gtsam
 import gtsam_unstable

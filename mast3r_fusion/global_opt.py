@@ -16,6 +16,40 @@ from scipy.spatial.transform import Rotation
 import mast3r_fusion.geoFunc.trans as trans
 import mast3r_fusion.geoFunc.data_utils as data_utils
 import os
+"""
+global_opt.py — 因子图与位姿优化模块（核心模块）
+
+功能描述:
+    实现基于 GTSAM 因子图框架的位姿优化，是 SLAM 系统的后端核心。
+    
+    核心类:
+    - FactorGraph: 管理整个因子图的生命周期，包括:
+      * 添加视觉因子 (add_factors): MASt3R 对称匹配 → Hessian 矩阵
+      * 求解优化 (solve_GN_calib): 构建 GTSAM 图 → LM 优化
+      * 滑动窗口管理: 边缘化旧帧，保持计算复杂度
+      * IMU 预积分: 集成 IMU 数据用于状态估计
+      * V-I 初始化: 积累 7 帧后估计重力方向、尺度和速度
+      * 位姿预测: 利用 IMU 预积分预测下一帧位姿
+    
+    核心函数:
+    - Align2GTSAM_factors(): Sim3 Hessian → GTSAM 线性容器因子
+      关键桥梁函数，处理 Sim3 到 GTSAM Pose3+Scale 的参数化转换
+    - getPoses() / getPosesRel(): 在不同位姿参数化之间转换
+    
+    GTSAM 变量约定:
+    - X(i): 第 i 帧相机位姿 (Pose3)
+    - S(i): 第 i 帧尺度因子 (Double)
+    - Z(i): 第 i 帧 IMU 坐标系位姿 (Pose3)
+    - V(i): 第 i 帧速度 (Vector3)
+    - B(i): 第 i 帧 IMU 偏置 (ConstantBias)
+    - C(i): 相机-IMU 外参 (Pose3)
+    
+    优化方法:
+    - Levenberg-Marquardt (LM) 优化器
+    - 支持 Cauchy 鲁棒核函数（用于回环因子）
+    - 滑动窗口 + Schur 补边缘化
+"""
+
 import math
 import time
 import yaml

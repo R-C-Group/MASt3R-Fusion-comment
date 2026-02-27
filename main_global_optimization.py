@@ -14,6 +14,36 @@ import lietorch
 import bisect
 import time
 import os
+"""
+main_global_optimization.py — 全局离线优化脚本
+
+功能描述:
+    在回环检测完成后，执行全局离线优化以精化整条轨迹。
+    
+    处理流程:
+    1. 加载所有预计算数据:
+       - graph.pkl: 在线 SLAM 的因子图（视觉+IMU 因子）
+       - loop_graph.pkl: 回环检测的因子（回环视觉约束）
+       - data.h5: 帧级数据
+    2. 构建全局因子图:
+       a. 视觉因子: 来自在线 SLAM 的相邻帧约束
+       b. IMU 预积分因子: 帧间运动约束
+       c. 回环因子: 跨时间间隔的视觉约束（使用 Cauchy 鲁棒核）
+       d. GNSS 因子（可选）: 来自 GNSS 的绝对位置约束
+       e. 先验因子: 对第一帧施加位姿和速度先验
+    3. 使用 GTSAM LM 优化器求解全局优化问题
+    4. 输出优化后的全局轨迹
+    
+    输入文件:
+    - graph.pkl: 在线因子图
+    - loop_graph.pkl: 回环因子图
+    - data.h5: 帧数据
+    - config YAML: 配置文件
+    
+    输出:
+    - global_result.txt: 全局优化后的位姿轨迹
+"""
+
 import argparse
 from matplotlib import cm
 

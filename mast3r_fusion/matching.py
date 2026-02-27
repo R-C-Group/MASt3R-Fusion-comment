@@ -1,3 +1,27 @@
+"""
+matching.py — 密集匹配模块
+
+功能描述:
+    实现帧间的密集像素匹配，是 SLAM 系统中建立帧间对应关系的核心。
+    
+    匹配流程:
+    1. 迭代投影匹配 (match_iterative_proj):
+       - 将 3D 点投影到参考帧的射线图中
+       - 迭代优化匹配位置（基于射线方向一致性）
+       - 调用 C++ 后端 mast3r_fusion_backends.iter_proj() 加速
+    2. 遮挡检测:
+       - 基于匹配点的 3D 距离差异过滤被遮挡的点
+    3. 描述子精细匹配 (refine_matches):
+       - 在局部邻域内用 MASt3R 描述子相似度精细化匹配位置
+    4. 亚像素精细化:
+       - 支持 2× 和 4× 的亚像素上采样匹配
+    
+    关键函数:
+    - match(): 完整匹配流程（投影+精细化+亚像素）
+    - match_iterative_proj(): 迭代投影匹配核心
+    - refine_matches(): 描述子精细化
+"""
+
 import torch
 import torch.nn.functional as F
 import mast3r_fusion.image as img_utils

@@ -10,6 +10,34 @@ from mast3r_fusion.geometry import (
 from mast3r_fusion.nonlinear_optimizer import check_convergence, huber
 from mast3r_fusion.config import config
 from mast3r_fusion.mast3r_utils import mast3r_match_asymmetric
+"""
+tracker.py — 帧跟踪器模块
+
+功能描述:
+    实现 FrameTracker 类，负责将当前帧注册到最近的关键帧坐标系中。
+    这是在线 SLAM 系统的视觉前端核心组件。
+    
+    跟踪流程:
+    1. MASt3R 非对称匹配（当前帧 → 关键帧）
+    2. 位姿估计（两种模式）:
+       a. 无标定模式: 基于射线方向+深度距离的残差 (opt_pose_ray_dist_sim3)
+       b. 有标定模式: 基于像素重投影+对数深度的残差 (opt_pose_calib_sim3)
+    3. 关键帧选择: 基于匹配覆盖率决定是否插入新关键帧
+    4. 点云更新: 利用新观测更新关键帧的 3D 点云
+    
+    优化方法:
+    - Gauss-Newton 法，通过 Cholesky 分解求解正规方程
+    - 支持 Huber 鲁棒核函数抑制外点影响
+    
+    关键类:
+    - FrameTracker: 帧到关键帧的位姿跟踪器
+    
+    关键函数:
+    - track(frame): 跟踪一帧，返回是否需要新关键帧
+    - opt_pose_ray_dist_sim3(): 无标定位姿优化（射线距离残差）
+    - opt_pose_calib_sim3(): 有标定位姿优化（重投影残差）
+"""
+
 import lietorch
 import time
 

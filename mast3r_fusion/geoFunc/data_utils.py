@@ -1,3 +1,24 @@
+"""
+geoFunc/data_utils.py — 传感器数据管理模块
+
+功能描述:
+    提供 IMU 数据管理和图像数据集加载工具:
+    
+    核心类:
+    - IMUPool: IMU 数据池，管理加速度计和陀螺仪数据
+      * load_from_file(): 从文本文件加载 IMU 记录
+      * get_records(): 按时间范围提取 IMU 测量
+      * 支持 NMEA 格式 GNSS 数据解析
+    
+    - ImageDataset: 图像数据集加载器
+      * 支持从文件夹或时间戳文件加载图像序列
+      * 管理相机标定信息（畸变矫正映射表）
+    
+    辅助函数:
+    - load_pose(): 从文本文件加载位姿数据
+    - 支持多种 IMU 数据格式（不同列排布）
+"""
+
 import numpy as np
 import re
 import mast3r_fusion.geoFunc.trans as trans

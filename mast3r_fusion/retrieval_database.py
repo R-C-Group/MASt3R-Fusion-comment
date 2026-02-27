@@ -1,3 +1,26 @@
+"""
+retrieval_database.py — 图像检索数据库模块
+
+功能描述:
+    基于 MASt3R 的图像检索模型，实现增量式倒排文件索引（IVF）。
+    用于在 SLAM 系统中查找共视帧和回环候选帧。
+    
+    工作流程:
+    1. 提取局部特征 → 量化到视觉词典 → 聚合为图像级描述
+    2. 查询时计算与数据库中所有图像的相似度
+    3. 返回 Top-K 最相似图像作为回环/共视候选
+    
+    核心类:
+    - RetrievalDatabase: 继承自 MASt3R 的 Retriever，
+      扩展了增量式更新和查询功能
+    
+    关键方法:
+    - update(frame): 查询数据库并可选地添加新帧
+    - query(feat, id): 在现有数据库中搜索最相似图像
+    - add_to_database(feat, id): 将新帧添加到倒排索引
+    - quantize_custom(): GPU 加速的视觉词典量化
+"""
+
 import torch
 import numpy as np
 from mast3r.retrieval.processor import Retriever

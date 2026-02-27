@@ -1,3 +1,31 @@
+"""
+dataloader.py — 数据集加载与相机标定模块
+
+功能描述:
+    提供多种数据集格式的加载支持和相机内参管理。
+    
+    支持的数据集:
+    - TUMDataset: TUM RGB-D
+    - EurocDataset: EuRoC MAV
+    - ETH3DDataset: ETH3D
+    - SevenScenesDataset: 7-Scenes
+    - RealsenseDataset: Intel RealSense 实时相机
+    - Webcam: 网络摄像头
+    - MP4Dataset: MP4 视频文件
+    - RGBFiles: RGB 图片文件夹
+    - StampedFiles: 带时间戳的图片文件
+    
+    核心类:
+    - MonocularDataset: 数据集基类，定义接口（图像迭代、时间戳、尺寸等）
+    - Intrinsics: 相机内参管理，支持:
+      * 针孔模型 (pinhole) + 径向/切向畸变矫正
+      * Mei 全景模型 (mei) + 全向去畸变
+      * 自动计算缩放后的内参（适配 MASt3R 输入尺寸）
+    
+    关键函数:
+    - load_dataset(path, stamp_path): 根据路径自动识别数据集类型并加载
+"""
+
 import pathlib
 import re
 import cv2

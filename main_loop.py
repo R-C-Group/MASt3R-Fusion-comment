@@ -23,6 +23,31 @@ import gtsam
 import gtsam_unstable
 from gtsam.symbol_shorthand import B, V, X, S, Z, C
 import pickle
+"""
+main_loop.py — 回环检测与局部优化脚本
+
+功能描述:
+    在在线 SLAM 完成后，对保存的帧数据执行回环检测和局部优化。
+    
+    处理流程:
+    1. 从 HDF5 文件加载所有关键帧数据（特征、点云、位姿等）
+    2. 使用图像检索数据库查找跨越较大时间间隔的回环候选
+    3. 对每个回环候选执行 MASt3R 对称匹配
+    4. 使用 GTSAM 因子图进行局部优化验证:
+       a. 构建包含视觉因子和 IMU 预积分因子的子图
+       b. LM 优化求解
+       c. 若优化收敛，确认回环并保存因子
+    5. 保存所有回环因子到 PKL 文件供全局优化使用
+    
+    输入:
+    - data.h5: 在线 SLAM 保存的帧数据
+    - graph.pkl: 在线 SLAM 保存的因子图
+    
+    输出:
+    - loop_graph.pkl: 包含回环因子的因子图
+    - loop_result.txt: 回环检测后的优化位姿
+"""
+
 import argparse
 
 import matplotlib

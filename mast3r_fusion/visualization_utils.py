@@ -1,5 +1,21 @@
 import functools
 import imgui
+"""
+visualization_utils.py — 可视化辅助工具
+
+功能描述:
+    为 3D 可视化提供底层渲染工具函数:
+    1. depth2rgb() — 深度图转彩色图（Turbo colormap）
+    2. create_frustum() — 创建相机视锥体的线框顶点/颜色
+    3. create_frustums() — 批量创建多个关键帧的视锥体
+    4. create_frustum_lines() — 创建视锥体的线段索引
+    5. render_lines() — 使用 ModernGL 渲染线段
+
+    视锥体形状:
+    - 由近平面的 4 个角点和光心构成（共 5 个点，8 条线段）
+    - 可以颜色编码置信度或帧类型
+"""
+import moderngl
 import matplotlib
 import torch
 import numpy as np

@@ -1,6 +1,36 @@
 import PIL
 import numpy as np
 import torch
+"""
+mast3r_utils.py — MASt3R 模型加载与推理封装模块
+
+功能描述:
+    封装了对 MASt3R 深度学习模型的所有调用，是连接核心模型与 SLAM 系统的桥梁。
+    
+    主要功能:
+    1. 模型加载:
+       - load_mast3r(): 加载预训练的 MASt3R 模型
+       - load_retriever(): 加载图像检索模型
+    2. 推理:
+       - mast3r_inference_mono(): 单目推理（自身配对，初始化用）
+       - mast3r_symmetric_inference(): 两帧对称推理（编码 + 解码）
+       - mast3r_decode_symmetric_batch(): 批量对称解码
+    3. 匹配:
+       - mast3r_match_symmetric(): 对称匹配（解码+匹配+质量评估）
+       - mast3r_match_asymmetric(): 非对称匹配（用于帧跟踪）
+    4. 工具:
+       - resize_img(): 图像缩放到模型所需尺寸
+       - downsample_feats(): 特征降采样
+    
+    MASt3R 输出（每对图像）:
+    - X (pts3d): 3D 点云（相机坐标系）
+    - C (conf): 3D 点的置信度
+    - D (desc): 用于匹配的密集描述子
+    - Q (desc_conf): 描述子置信度
+"""
+
+import functools
+
 import einops
 
 import mast3r.utils.path_to_dust3r  # noqa
