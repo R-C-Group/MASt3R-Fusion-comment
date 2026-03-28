@@ -28,16 +28,11 @@ from mast3r_fusion.config import config
 class Mode(Enum):
     """
     系统运行模式枚举。
-    
-    INIT       = 0  # 初始化模式：处理第一帧，建立初始点云
-    TRACKING   = 1  # 跟踪模式：正常帧到关键帧的位姿跟踪
-    RELOC      = 2  # 重定位模式：跟踪丢失后的恢复
-    TERMINATED = 3  # 终止：系统已停止运行
     """
-    INIT = 0
-    TRACKING = 1
-    RELOC = 2
-    TERMINATED = 3
+    INIT = 0 # 初始化模式：处理第一帧，建立初始点云
+    TRACKING = 1 # 跟踪模式：正常帧到关键帧的位姿跟踪
+    RELOC = 2 # 重定位模式：跟踪丢失后的恢复
+    TERMINATED = 3 # 终止：系统已停止运行
 
 
 @dataclasses.dataclass
@@ -45,38 +40,22 @@ class Frame:
     """
     单帧数据容器，存储一帧图像的所有关联信息。
     
-    属性说明:
-        frame_id: int              — 在数据集中的帧索引
-        img: Tensor (1,3,H,W)      — 归一化后的图像张量（0~1）
-        img_shape: Tensor (1,2)    — 图像尺寸 [H, W]
-        img_true_shape: Tensor     — 缩放前的原始图像尺寸
-        uimg: Tensor (H,W,3)       — 未归一化的图像（用于可视化，0~1）
-        T_WC: Sim3                 — 世界到相机的 Sim3 变换（7DoF: 平移+旋转+尺度）
-        X_canon: Tensor (H*W,3)    — 相机坐标系下的 3D 点云
-        C: Tensor (H*W,1)          — 每个 3D 点的置信度
-        feat: Tensor               — MASt3R 编码器特征（用于匹配和解码）
-        pos: Tensor                — ViT patch 位置编码
-        N: int                     — 点云更新次数（用于加权平均）
-        N_updates: int             — 跟踪更新次数
-        K: Tensor (3,3)            — 相机内参矩阵
-        T_CkCf: Sim3               — 关键帧到当前帧的相对变换（跟踪结果）
-        ref_kf: int                — 参考关键帧的索引
     """
-    frame_id: int
-    img: torch.Tensor
-    img_shape: torch.Tensor
-    img_true_shape: torch.Tensor
-    uimg: torch.Tensor
-    T_WC: lietorch.Sim3 = lietorch.Sim3.Identity(1)
-    X_canon: Optional[torch.Tensor] = None
-    C: Optional[torch.Tensor] = None
-    feat: Optional[torch.Tensor] = None
-    pos: Optional[torch.Tensor] = None
-    N: int = 0
-    N_updates: int = 0
-    K: Optional[torch.Tensor] = None
-    T_CkCf: lietorch.Sim3 = lietorch.Sim3.Identity(1)
-    ref_kf: int = 0
+    frame_id: int # 数据集中的帧索引
+    img: torch.Tensor # 归一化（0~1）图像张量 (1, 3, H, W)
+    img_shape: torch.Tensor # 图像尺寸 [H, W]
+    img_true_shape: torch.Tensor # 缩放前的原始图像尺寸
+    uimg: torch.Tensor # 未归一化的图像（用于可视化，0~1）
+    T_WC: lietorch.Sim3 = lietorch.Sim3.Identity(1) # 世界到相机的 Sim3 变换（7DoF: 平移+旋转+尺度）
+    X_canon: Optional[torch.Tensor] = None # 相机坐标系下的 3D 点云 (H*W, 3)
+    C: Optional[torch.Tensor] = None # 每个 3D 点的置信度
+    feat: Optional[torch.Tensor] = None # MASt3R 编码器特征（用于匹配和解码）
+    pos: Optional[torch.Tensor] = None # ViT patch 位置编码
+    N: int = 0 # 点云更新次数（用于加权平均）
+    N_updates: int = 0 # 跟踪更新次数
+    K: Optional[torch.Tensor] = None # 相机内参矩阵
+    T_CkCf: lietorch.Sim3 = lietorch.Sim3.Identity(1) # 关键帧到当前帧的相对变换（跟踪结果）
+    ref_kf: int = 0 # 参考关键帧的索引（用于跟踪和重定位）
 
     def get_score(self, C):
         """

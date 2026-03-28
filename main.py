@@ -340,7 +340,7 @@ if __name__ == "__main__":
     model.share_memory()  # 模型参数共享内存，支持多进程访问
 
     # ===========================
-    # 标定检查
+    # 标定（标定参数）检查
     # ===========================
     has_calib = dataset.has_calib()
     use_calib = config["use_calib"]
@@ -388,18 +388,18 @@ if __name__ == "__main__":
     # ===========================
     # 主循环 — 逐帧处理
     # ===========================
-    i = 0                      # 当前帧索引
+    i = 0                      # 当前帧索引，图像索引
     fps_timer = time.time()    # FPS 计时器
 
     frames = []                # 可选的原始帧缓存
 
     while True:
-        mode = states.get_mode()
+        mode = states.get_mode() # 获取当前系统模式（INIT/TRACKING/RELOC）
 
         # 检查可视化窗口消息（暂停/终止）
         msg = try_get_msg(viz2main)
         last_msg = msg if msg is not None else last_msg
-        if last_msg.is_terminated:
+        if last_msg.is_terminated: # 如果收到终止信号，跳出循环结束程序
             states.set_mode(Mode.TERMINATED)
             break
 
@@ -420,7 +420,7 @@ if __name__ == "__main__":
         # ===========================
         # 读取当前帧图像
         # ===========================
-        timestamp, img = dataset[i]
+        timestamp, img = dataset[i]#根据索引读取图像和对应时间戳
         # time.sleep(0.2)
         if save_frames:
             frames.append(img)
