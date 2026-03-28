@@ -53,6 +53,8 @@ def point_to_dist(X):
     返回:
         d: Tensor, shape (..., 1) — 到原点的距离
     """
+    # 这里刻意返回 shape (..., 1) 而不是 (...,)，
+    # 是为了后续和点坐标/雅可比在最后一维上更容易拼接。
     d = torch.sqrt(torch.sum(X**2, dim=-1, keepdim=True))
     return d
 
@@ -77,11 +79,15 @@ def point_to_ray_dist(X):
         rd: Tensor, shape (B, N, 4) — [射线方向(3), 深度(1)]
         drd_dP: Tensor, shape (B, N, 4, 3) — 雅可比矩阵
     """
+    # 这一步把 3D 点改写成“方向 + 距离”表示。
+    # 对单目几何来说，这种表示通常比直接用 xyz 更接近观测本身。
     d = torch.sqrt(torch.sum(X**2, dim=-1, keepdim=True))  # 距离: ||X||
     r = X / d  # 单位射线方向: X / ||X||
 
     # 计算雅可比: d(r)/dX
     # r = X/d, dr/dX = (I - r*r^T) / d
+    # 这里利用单位向量微分公式：
+    # d(x/||x||)/dx = (I - rr^T)/||x||
     eye = torch.eye(3, device=X.device).expand_as(skew_sym(X))
     rrt = torch.einsum("...i,...j->...ij", r, r)  # r * r^T (外积)
     dr_dP = (eye - rrt) / d[..., None]  # 射线方向对坐标的雅可比
@@ -127,7 +133,8 @@ def constrain_points_to_ray(img_size, Xs, K):
     dP_dz_y = (p[..., 1] - K[1, 2]) / K[1, 1]
     dP_dz = torch.stack([dP_dz_x, dP_dz_y, torch.ones_like(dP_dz_x)], dim=-1)
 
-    # 用预测的深度（z 分量）乘以射线方向
+    # 注意这里保留的是“深度尺度”，但把横向分量重新绑回像素射线。
+    # 也就是说，它修正的是方向，不是简单把整点投影后再反投影。
     X_new = Xs[..., 2:3] * dP_dz
     return X_new
 
@@ -147,6 +154,8 @@ def act_Sim3(X, pC, return_J=True):
         pW: Tensor, shape (B, N, 3) — 世界坐标系下的 3D 点
         J: Tensor, shape (B, N, 3, 7) — 3D 点对 Sim3 参数的雅可比（可选）
     """
+    # 这里的 `act` 会同时处理旋转、平移和尺度，
+    # 因而是后续视觉优化里最常出现的基本操作之一。
     pW = X.act(pC)  # 应用 Sim3 变换
 
     if return_J:
@@ -154,7 +163,8 @@ def act_Sim3(X, pC, return_J=True):
         R = X.matrix()[..., :3, :3]  # 旋转矩阵 R
         rpC = torch.einsum("...ij,...nj->...ni", R, pC)  # R * pC 旋转后的点
 
-        # 雅可比矩阵 J = d(pW)/d([t, θ, s])，其中 θ 是旋转向量
+        # 雅可比矩阵 J = d(pW)/d([t, θ, s])。
+        # 之所以手写出来，是因为后续很多残差都会沿这条链式法则继续往回传。
         # d(pW)/dt = I (平移的雅可比)
         J_t = torch.eye(3, device=pW.device, dtype=pW.dtype).expand(
             *pW.shape, 3
@@ -197,6 +207,8 @@ def project_calib(P, K, img_size):
         valid: Tensor, shape (...,) — 有效性掩码（深度大于 depth_eps 的点）
         dp_dP: Tensor, shape (..., 3, 3) — 投影的雅可比矩阵
     """
+    # 这个函数只关心“几何投影”，不关心匹配置信度；
+    # `C_thresh` 在这里实际上没有参与计算。
     C_thresh = 1.5  # 置信度阈值（此处未使用）
 
     # 针孔投影: u = fx·X/Z + cx, v = fy·Y/Z + cy
@@ -214,6 +226,7 @@ def project_calib(P, K, img_size):
     log_z = torch.log(z)        # 对数深度
 
     p = torch.stack([u, v, log_z], dim=-1)
+    # 投影有效性的第一道门槛是“深度必须为正且足够远离零”。
     valid = z > depth_eps  # 只有深度大于阈值的点有效
 
     # 计算投影的雅可比矩阵 dp/dP
@@ -254,6 +267,7 @@ def backproject(p, z, K):
     返回:
         P: Tensor, shape (..., 3) — 3D 点坐标 [X, Y, Z]
     """
+    # 这是标准针孔反投影，是 `project_calib` 的几何逆过程。
     fx, fy = K[0, 0], K[1, 1]
     cx, cy = K[0, 2], K[1, 2]
     x = (p[..., 0:1] - cx) / fx * z
@@ -283,6 +297,6 @@ def get_pixel_coords(b, img_size, device, dtype):
         torch.arange(h, device=device, dtype=dtype),
         indexing="xy",
     )
-    # 加 0.5 使坐标位于像素中心
+    # 用像素中心而不是左上角整数坐标，是为了让投影/反投影模型更符合连续相机几何。
     p = torch.stack(uv, dim=-1).reshape(1, -1, 2).expand(b, -1, -1) + 0.5
     return p

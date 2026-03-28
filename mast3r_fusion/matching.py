@@ -31,16 +31,20 @@ import time
 
 
 def match(X11, X21, D11, D21, idx_1_to_2_init=None, subpixel_factor = 1):
+    # 当前实现把“粗匹配 + 精细化”都封装在 `match_iterative_proj` 里。
+    # 这里保留单独入口，是为了让上层不需要关心内部步骤的具体组合。
     idx_1_to_2, valid_match2 = match_iterative_proj(X11, X21, D11, D21, idx_1_to_2_init, subpixel_factor)
     return idx_1_to_2, valid_match2
 
 
 def pixel_to_lin(p1, w, subpixel_factor = 1):
+    # 把二维像素坐标压成一维线性索引，便于后续批量 gather/scatter。
     idx_1_to_2 = p1[..., 0] + (w * subpixel_factor * p1[..., 1])
     return idx_1_to_2
 
 
 def lin_to_pixel(idx_1_to_2, w):
+    # 与 `pixel_to_lin` 相反，把线性索引还原成 (u, v)。
     u = idx_1_to_2 % w
     v = idx_1_to_2 // w
     p = torch.stack((u, v), dim=-1)
@@ -51,7 +55,8 @@ def prep_for_iter_proj(X11, X21, idx_1_to_2_init):
     b, h, w, _ = X11.shape
     device = X11.device
 
-    # Ray image
+    # 把参考图的每个像素点转成单位射线，并额外拼上空间梯度。
+    # 后端 C++ 迭代投影器会利用这些局部一阶信息做更稳定的搜索。
     rays_img = F.normalize(X11, dim=-1)
     rays_img = rays_img.permute(0, 3, 1, 2)  # (b,c,h,w)
     gx_img, gy_img = img_utils.img_gradient(rays_img)
@@ -60,11 +65,12 @@ def prep_for_iter_proj(X11, X21, idx_1_to_2_init):
         0, 2, 3, 1
     ).contiguous()  # (b,h,w,c)
 
-    # 3D points to project
+    # 待投影点来自另一张图，它们会被逐点投到当前参考射线图上寻找对应。
     X21_vec = X21.view(b, -1, 3)
     pts3d_norm = F.normalize(X21_vec, dim=-1)
 
-    # Initial guesses of projections
+    # 如果没有上一轮匹配结果，就用恒等映射作为初始化。
+    # 对相邻帧而言，这通常是足够合理的起点。
     if idx_1_to_2_init is None:
         # Reset to identity mapping
         idx_1_to_2_init = torch.arange(h * w, device=device)[None, :].repeat(b, 1)
@@ -82,6 +88,8 @@ def match_iterative_proj(X11, X21, D11, D21, idx_1_to_2_init=None, subpixel_fact
     rays_with_grad_img, pts3d_norm, p_init = prep_for_iter_proj(
         X11, X21, idx_1_to_2_init
     )
+    # `iter_proj` 是第一阶段的几何粗配准：
+    # 不直接靠描述子暴力检索，而是利用 3D 射线方向连续性寻找落点。
     p1, valid_proj2 = mast3r_fusion_backends.iter_proj(
         rays_with_grad_img,
         pts3d_norm,
@@ -92,7 +100,8 @@ def match_iterative_proj(X11, X21, D11, D21, idx_1_to_2_init=None, subpixel_fact
     )
     p1 = p1.long()
 
-    # Check for occlusion based on distances
+    # 第二阶段做一个简单但有效的遮挡/错配过滤：
+    # 如果匹配到的两点在 3D 上相差太远，说明这个对应很可能穿过了遮挡边界。
     batch_inds = torch.arange(b, device=device)[:, None].repeat(1, h * w)
 
     # X_temp1 = X11[batch_inds, p1[..., 1], p1[..., 0], :].reshape(b, h, w, 3).clone()
@@ -112,6 +121,8 @@ def match_iterative_proj(X11, X21, D11, D21, idx_1_to_2_init=None, subpixel_fact
     valid_proj2 = valid_proj2 & valid_dists2
 
     if cfg["radius"] > 0:
+        # 第三阶段用描述子在局部邻域内再细抠一次，
+        # 相当于在几何粗配准附近做小范围相关性搜索。
         (p1,) = mast3r_fusion_backends.refine_matches(
             D11.half(),
             D21.view(b, h * w, -1).half(),
@@ -126,7 +137,9 @@ def match_iterative_proj(X11, X21, D11, D21, idx_1_to_2_init=None, subpixel_fact
         123
     # print(time.time())
     
-    # ugly implementation, to be updated
+    # 最后做亚像素级 refinement。
+    # 当前实现比较“硬编码”，但思想很直接：
+    # 先上采样描述子图，再在局部小窗口里挑相似度最高的位置。
     assert( subpixel_factor == 1 or subpixel_factor==2 or subpixel_factor==4)
     if subpixel_factor == 4:
         D11_up = F.interpolate(
@@ -231,6 +244,6 @@ def match_iterative_proj(X11, X21, D11, D21, idx_1_to_2_init=None, subpixel_fact
     else:
         raise Exception("subpixel_factor must be 1 or 2")
 
-    # Convert to linear index
+    # 返回给上层的仍然是一维索引，因为后续点/置信度/描述子访问基本都按线性表组织。
     idx_1_to_2 = pixel_to_lin(p1, w, subpixel_factor)
     return idx_1_to_2, valid_proj2.unsqueeze(-1)

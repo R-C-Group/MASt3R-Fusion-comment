@@ -60,7 +60,8 @@ class MonocularDataset(torch.utils.data.Dataset):
         return len(self.rgb_files)
 
     def __getitem__(self, idx):
-        # Call get_image before timestamp for realsense camera
+        # 某些实时数据源（如 RealSense）是在 `get_image()` 内部顺手生成时间戳的，
+        # 所以这里必须先取图像，再取时间戳。
         img = self.get_image(idx)
         timestamp = self.get_timestamp(idx)
         return timestamp, img
@@ -77,6 +78,8 @@ class MonocularDataset(torch.utils.data.Dataset):
     def get_image(self, idx):
         img = self.read_img(idx)
         if self.use_calibration:
+            # 这里做的是“读图后立刻重映射”，意味着系统后续看到的图像
+            # 已经是标定/去畸变后的版本，几何模型应与之保持一致。
             img = self.camera_intrinsics.remap(img)
         return img.astype(self.dtype) / 255.0
 
@@ -84,6 +87,10 @@ class MonocularDataset(torch.utils.data.Dataset):
         img = self.read_img(0)
         raw_img_shape = img.shape
         img = resize_img(img, self.img_size)
+        # 返回两个尺寸：
+        # 1. MASt3R 实际处理尺寸
+        # 2. 原始图像尺寸
+        # 后续内参缩放、可视化和标定映射都可能同时用到这两个尺度。
         # 3XHxW, HxWx3 -> HxW, HxW
         return img["img"][0].shape[1:], raw_img_shape[:2]
 
@@ -123,8 +130,9 @@ class TUMDataset(MonocularDataset):
 class EurocDataset(MonocularDataset):
     def __init__(self, dataset_path):
         super().__init__()
-        # For Euroc dataset, the distortion is too much to handle for MASt3R.
-        # So we always undistort the images, but the calibration will not be used for any later optimization unless specified.
+        # EuRoC 的畸变较重，因此这里强制先去畸变。
+        # 这说明“是否使用标定做后端优化”和“是否先把图像纠正成可被网络接受”
+        # 是两个不同层面的决定。
         self.use_calibration = True
         self.dataset_path = pathlib.Path(dataset_path)
         rgb_list = self.dataset_path / "mav0/cam0/data.csv"
@@ -183,6 +191,8 @@ class RealsenseDataset(MonocularDataset):
     def __init__(self):
         super().__init__()
         self.dataset_path = None
+        # 这个类不是离线数据集，而是把实时相机包装成“看起来像 Dataset 的对象”，
+        # 这样主流程就不需要为在线/离线两种输入写两套逻辑。
         self.pipeline = rs.pipeline()
         # self.h, self.w = 720, 1280
         self.h, self.w = 480, 640
@@ -267,6 +277,8 @@ class MP4Dataset(MonocularDataset):
         self.decoder = VideoDecoder(str(self.dataset_path))
         self.fps = self.decoder.metadata.average_fps
         self.total_frames = self.decoder.metadata.num_frames
+        # 视频数据集把时间轴的下采样显式转成 stride，
+        # 避免先解所有帧再丢弃，能更省 IO 和解码开销。
         self.stride = config["dataset"]["subsample"]
 
     def __len__(self):
@@ -299,6 +311,11 @@ class StampedFiles(MonocularDataset):
         self.use_calibration = False
         self.dataset_path = pathlib.Path(dataset_path)
 
+        # `stamp_path` 支持多种格式：
+        # - 只有时间戳
+        # - 时间戳 + 文件名
+        # - 空格/逗号等混合分隔
+        # 这里的解析逻辑就是为了兼容这些“半结构化”输入。
         data = np.genfromtxt(stamp_path, delimiter=None, dtype=str)
         if len(data.shape) == 1:
             dd = np.array([re.split('[ ,]+', line.strip()) for line in data if line is not None])
@@ -325,6 +342,9 @@ class Intrinsics:
         self.distortion = distortion
         self.mapx = mapx
         self.mapy = mapy
+        # `K_frame` 是最容易忽视、但又最关键的一个量：
+        # 它不是原始分辨率上的内参，而是经过 resize/crop 之后，
+        # 真正对应网络输入图像坐标系的内参。
         _, (scale_w, scale_h, half_crop_w, half_crop_h) = resize_img(
             np.zeros((H, W, 3)), self.img_size, return_transformation=True
         )
@@ -335,6 +355,7 @@ class Intrinsics:
         self.K_frame[1, 2] = self.K[1, 2] / scale_h - half_crop_h
 
     def remap(self, img):
+        # 把原图重映射到去畸变后的像素域。
         return cv2.remap(img, self.mapx, self.mapy, cv2.INTER_LINEAR)
 
     @staticmethod
@@ -350,6 +371,8 @@ class Intrinsics:
             K_opt = K.copy()
             mapx, mapy = None, None
             center = config["dataset"]["center_principle_point"]
+            # `K_opt` 不是简单拷贝原始内参，而是 OpenCV 给出去畸变后更适合
+            # 当前图像范围的“优化内参”。
             K_opt, _ = cv2.getOptimalNewCameraMatrix(
                 K, distortion, (W, H), 0, (W, H), centerPrincipalPoint=center
             )
@@ -361,6 +384,8 @@ class Intrinsics:
             D = distortion
             return Intrinsics(img_size, W, H, K, K_opt, D, mapx, mapy)
         elif model == 'mei':
+            # Mei 模型用于全向/鱼眼类相机。这里通过 omnidir 的重映射，
+            # 把原始成像模型转换成下游更容易处理的透视图像。
             fx, fy, cx, cy = calib[:4]
             K = np.eye(3)
             K[0,0] = fx
@@ -393,6 +418,9 @@ class Intrinsics:
 
 
 def load_dataset(dataset_path,stamp_path = None):
+    # 这个工厂函数的核心价值在于：
+    # 上层主循环只关心“得到一个统一 Dataset 接口”，
+    # 不需要知道底层到底是 TUM、视频文件还是实时相机。
     split_dataset_type = dataset_path.split("/")
     if "tum" in split_dataset_type:
         return TUMDataset(dataset_path)

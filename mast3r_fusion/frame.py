@@ -8,7 +8,7 @@ frame.py — 帧与关键帧管理模块
     1. Frame — 单帧数据容器（图像、特征、位姿、3D点云、置信度等）
     2. SharedKeyframes — 跨进程共享的关键帧滑动窗口缓冲区
     3. SharedStates — 跨进程共享的系统状态（模式、当前帧、优化队列等）
-    4. Mode — 系统运行模式枚举（INIT, TRACKING, RELOC, TERMINATED）
+    4. Mode — 系统运行模式枚举（INIT/初始化, TRACKING/跟踪, RELOC/重定位, TERMINATED/终止）
     
     关键设计:
     - 使用 torch.Tensor.share_memory_() 实现 GPU 数据的进程间共享
@@ -111,6 +111,8 @@ class Frame:
             C: Tensor (H*W, 1) — 新的置信度图
         """
         filtering_mode = config["tracking"]["filtering_mode"]
+        # `Frame` 里的点图并不是一次性定型的，而是允许被后续观测持续修正。
+        # 不同 filtering mode 本质上是在做不同的“多次观测融合策略”。
 
         if self.N == 0:
             # 首次观测，直接赋值
@@ -123,15 +125,18 @@ class Frame:
             return
 
         if filtering_mode == "first":
+            # 只保留第一次观测，强调稳定性，不追求后续细化。
             if self.N_updates == 1:
                 self.X_canon = X.clone()
                 self.C = C.clone()
                 self.N = 1
         elif filtering_mode == "recent":
+            # 始终相信最新观测，适合快速响应，但会更容易受瞬时噪声影响。
             self.X_canon = X.clone()
             self.C = C.clone()
             self.N = 1
         elif filtering_mode == "best_score":
+            # 用全局置信度分数做“一票否决”，而不是逐像素融合。
             new_score = self.get_score(C)
             if new_score > self.score:
                 self.X_canon = X.clone()
@@ -139,15 +144,19 @@ class Frame:
                 self.N = 1
                 self.score = new_score
         elif filtering_mode == "indep_conf":
+            # 逐像素竞争，谁的置信度更高就保留谁。
             new_mask = C > self.C
             self.X_canon[new_mask.repeat(1, 3)] = X[new_mask.repeat(1, 3)]
             self.C[new_mask] = C[new_mask]
             self.N = 1
         elif filtering_mode == "weighted_pointmap":
+            # 直接在欧式坐标下做加权平均，简单但对角度变化较敏感。
             self.X_canon = ((self.C * self.X_canon) + (C * X)) / (self.C + C)
             self.C = self.C + C
             self.N += 1
         elif filtering_mode == "weighted_spherical":
+            # 先转球坐标再平均，等价于把“方向”和“距离”拆开融合，
+            # 对视线方向变化更友好。
 
             def cartesian_to_spherical(P):
                 r = torch.linalg.norm(P, dim=-1, keepdim=True)
@@ -201,6 +210,7 @@ def create_frame(i, img, T_WC, img_size=512, device="cuda:0"):
     返回:
         Frame 对象
     """
+    # MASt3R 对输入分辨率和裁剪方式很敏感，这一步既是缩放，也是统一输入协议。
     img = resize_img(img, img_size)                     # 缩放图像到 MASt3R 所需尺寸
     rgb = img["img"].to(device=device)                   # 归一化图像张量 (1, 3, H, W)
     img_shape = torch.tensor(img["true_shape"], device=device)  # 实际图像尺寸
@@ -208,7 +218,8 @@ def create_frame(i, img, T_WC, img_size=512, device="cuda:0"):
     uimg = torch.from_numpy(img["unnormalized_img"]) / 255.0    # 未归一化图像 (0~1, 用于可视化)
     downsample = config["dataset"]["img_downsample"]
     if downsample > 1:
-        # 降采样以减少点云密度和准内存占用
+        # 这里的降采样会影响后续点图密度、匹配规模和显存占用，
+        # 是速度/精度/内存三者之间的直接权衡。
         uimg = uimg[::downsample, ::downsample]
         img_shape = img_shape // downsample
     frame = Frame(i, rgb, img_shape, img_true_shape, uimg, T_WC)
@@ -260,6 +271,8 @@ class SharedStates:
 
     def set_frame(self, frame):
         with self.lock:
+            # 当前帧会被可视化进程和重定位逻辑反复读取，因此这里做的是
+            # “完整快照式覆盖”，而不是增量更新。
             self.dataset_idx[:] = frame.frame_id
             self.img[:] = frame.img
             self.uimg[:] = frame.uimg
@@ -273,6 +286,8 @@ class SharedStates:
 
     def get_frame(self):
         with self.lock:
+            # 这里返回的是基于共享内存构造的轻量 `Frame` 视图，
+            # 方便上层继续沿用统一的数据结构接口。
             frame = Frame(
                 int(self.dataset_idx[0]),
                 self.img,
@@ -384,8 +399,8 @@ class SharedKeyframes:
         """
         with self.lock:
             # print('get:',idx,self.rollup_sum.value)
-            # put all of the data into a frame
-            # 从共享缓冲区中重建 Frame 对象
+            # 关键点在于 `idx` 是“全局关键帧编号”，而底层共享缓存是滑窗局部编号；
+            # 两者靠 `rollup_sum` 做映射。
             kf = Frame(
                 int(self.dataset_idx[idx-self.rollup_sum.value]),
                 self.img[idx-self.rollup_sum.value],
@@ -475,8 +490,11 @@ class SharedKeyframes:
         """
         滑动窗口: 丢弃最旧的 rollup 个关键帧以释放内存。
         
-        实现方式: 将所有张量循环左移 rollup 个位置，
-        并更新 n_size 和 rollup_sum 以保证全局索引的一致性。
+        实现方式: 将所有张量循环左移 `rollup` 个位置，
+        并同步更新 `n_size` 与 `rollup_sum`。
+
+        注意这里丢弃的是“共享缓存中的旧关键帧副本”，不是逻辑上的历史消失：
+        图优化、H5 保存、全局编号都会继续保留它们的影响。
         
         参数:
             rollup: int — 要丢弃的帧数（默认 256）

@@ -42,6 +42,7 @@ import mast3r_fusion.matching as matching
 
 
 def load_mast3r(path=None, device="cuda"):
+    # 主模型负责输出点图、描述子和置信度，是整个视觉前端的“特征工厂”。
     weights_path = (
         "checkpoints/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth"
         if path is None
@@ -52,6 +53,8 @@ def load_mast3r(path=None, device="cuda"):
 
 
 def load_retriever(mast3r_model, retriever_path=None, device="cuda"):
+    # 检索器和主模型共用 backbone，作用不是做精确配准，
+    # 而是快速提出“哪些历史关键帧值得尝试建立约束”。
     retriever_path = (
         "checkpoints/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_trainingfree.pth"
         if retriever_path is None
@@ -63,6 +66,8 @@ def load_retriever(mast3r_model, retriever_path=None, device="cuda"):
 
 @torch.inference_mode
 def decoder(model, feat1, feat2, pos1, pos2, shape1, shape2):
+    # 编码器特征在 `frame.feat/pos` 中缓存后，可被反复送入 decoder，
+    # 避免每次匹配都重新跑整张图的编码器。
     dec1, dec2 = model._decoder(feat1, pos1, feat2, pos2)
     with torch.amp.autocast(enabled=False, device_type="cuda"):
         res1 = model._downstream_head(1, [tok.float() for tok in dec1], shape1)
@@ -71,6 +76,8 @@ def decoder(model, feat1, feat2, pos1, pos2, shape1, shape2):
 
 
 def downsample(X, C, D, Q):
+    # 数据集级别的降采样会同时作用到几何、置信度和描述子，
+    # 这样整个系统都在同一分辨率上工作，避免索引错位。
     downsample = config["dataset"]["img_downsample"]
     if downsample > 1:
         # C and Q: (...xHxW)
@@ -84,6 +91,8 @@ def downsample(X, C, D, Q):
 
 @torch.inference_mode
 def mast3r_symmetric_inference(model, frame_i, frame_j):
+    # 对称推理会跑两次 decoder：
+    # i 看 j、j 看 i。这样后续能同时得到双向匹配质量。
     if frame_i.feat is None:
         frame_i.feat, frame_i.pos, _ = model._encode_image(
             frame_i.img, frame_i.img_true_shape
@@ -147,6 +156,8 @@ def mast3r_decode_symmetric_batch(
 
 @torch.inference_mode
 def mast3r_inference_mono(model, frame):
+    # 初始化阶段用“自己和自己配对”的方式，让网络直接给出单帧点图。
+    # 这不是严格意义的单目深度网络，而是复用 MASt3R 的双目接口。
     if frame.feat is None:
         frame.feat, frame.pos, _ = model._encode_image(frame.img, frame.img_true_shape)
 
@@ -181,7 +192,8 @@ def mast3r_match_symmetric(model, feat_i, pos_i, feat_j, pos_j, shape_i, shape_j
     Dii, Dji, Djj, Dij = D[0], D[1], D[2], D[3]
     Qii, Qji, Qjj, Qij = Q[0], Q[1], Q[2], Q[3]
 
-    # Always matching both
+    # 通过拼接的方式把 i->j 与 j->i 两个方向打包成一次批处理匹配，
+    # 后面再拆回来，减少重复代码路径。
     X11 = torch.cat((Xii, Xjj), dim=0)
     X21 = torch.cat((Xji, Xij), dim=0)
     D11 = torch.cat((Dii, Djj), dim=0)
@@ -237,6 +249,8 @@ def mast3r_asymmetric_inference(model, frame_i, frame_j):
 
 import matplotlib.pyplot as plt
 def mast3r_match_asymmetric(model, frame_i, frame_j, idx_i2j_init=None):
+    # 非对称匹配是在线跟踪默认路径：只保留当前帧到关键帧的一侧结果，
+    # 比对称版本更轻，适合逐帧运行。
     X, C, D, Q = mast3r_asymmetric_inference(model, frame_i, frame_j)
     
     b, h, w = X.shape[:-1]
@@ -252,7 +266,7 @@ def mast3r_match_asymmetric(model, frame_i, frame_j, idx_i2j_init=None):
         Xii, Xji, Dii, Dji, idx_1_to_2_init=idx_i2j_init
     )
 
-    # How rest of system expects it
+    # 后续模块都按 `(B, H*W, ...)` 的扁平布局访问像素，因此这里统一 reshape。
     Xii, Xji = einops.rearrange(X, "b h w c -> b (h w) c")
     Cii, Cji = einops.rearrange(C, "b h w -> b (h w) 1")
     Dii, Dji = einops.rearrange(D, "b h w c -> b (h w) c")
@@ -273,7 +287,8 @@ def _resize_pil_image(img, long_edge_size):
 
 def resize_img(img, size, square_ok=False, return_transformation=False):
     assert size == 224 or size == 512
-    # numpy to PIL format
+    # 这里不仅仅是缩放，还隐含了与 MASt3R 训练/预处理流程一致的裁剪规则。
+    # 一旦改这里，后面内参、像素坐标和匹配几何都可能要跟着变。
     img = PIL.Image.fromarray(np.uint8(img * 255))
     W1, H1 = img.size
     if size == 224:

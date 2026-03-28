@@ -41,6 +41,8 @@ def load_config(filepath):
         修改全局变量 config
     """
     global config
+    # 这里采用“递归加载父配置 -> 当前配置覆盖”的方式，
+    # 让配置文件可以像模板系统一样逐层细化。
     with open(filepath, "r") as f:
         yml = yaml.load(f, Loader=yaml.SafeLoader)
 
@@ -52,7 +54,9 @@ def load_config(filepath):
         load_config(parent_path)
         yml.pop("inherit")  # 移除 inherit 字段本身
 
-    # 用当前配置更新全局 config（后加载的覆盖先前的）
+    # 当前实现是浅层 `dict.update()`：
+    # 如果某个键对应的是嵌套字典，则会整体替换，而不是递归合并。
+    # 读配置时要特别注意这一点。
     config.update(yml)
 
 
@@ -71,4 +75,5 @@ def set_global_config(cfg):
         - 回环检测/全局优化脚本中加载配置后设置全局变量
     """
     global config
+    # 这一步常用于多进程场景，让子进程拿到和主进程一致的配置快照。
     config = cfg

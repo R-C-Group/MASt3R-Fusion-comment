@@ -37,6 +37,7 @@ def prepare_savedir(args, dataset):
         save_dir: Path — 保存目录路径
         seq_name: str — 数据集序列名称
     """
+    # 所有可视化/评估产物默认收敛到 `logs/` 下，便于和中间结果分开管理。
     save_dir = pathlib.Path("logs")
     if args.save_as != "default":
         save_dir = save_dir / args.save_as
@@ -71,13 +72,14 @@ def save_traj(
     logdir.mkdir(exist_ok=True, parents=True)
     logfile = logdir / logfile
     with open(logfile, "w") as f:
-        # for keyframe_id in frames.keyframe_ids:
+        # 这里保存的是关键帧轨迹，而不是全帧轨迹。
         for i in range(len(frames)):
             keyframe = frames[i]
             t = timestamps[keyframe.frame_id]  # 获取该关键帧的时间戳
             if intrinsics is None:
                 T_WC = as_SE3(keyframe.T_WC)  # 从 Sim3 提取 SE3
             else:
+                # 如果存在进一步的标定修正逻辑，这里允许在落盘前再做一次位姿矫正。
                 T_WC = intrinsics.refine_pose_with_calibration(keyframe)  # 标定修正
             x, y, z, qx, qy, qz, qw = T_WC.data.numpy().reshape(-1)
             f.write(f"{t} {x} {y} {z} {qx} {qy} {qz} {qw}\n")
@@ -105,17 +107,18 @@ def save_reconstruction(savedir, filename, keyframes, c_conf_threshold):
     colors = []
     for i in range(len(keyframes)):
         keyframe = keyframes[i]
-        # 如果使用标定，需要将点约束到相机射线上
+        # 若使用标定，先把点重新绑回像素射线，再导出世界点云，
+        # 这样更符合相机模型，也能减少畸变带来的侧向偏差。
         if config["use_calib"]:
             X_canon = constrain_points_to_ray(
                 keyframe.img_shape.flatten()[:2], keyframe.X_canon[None], keyframe.K
             )
             keyframe.X_canon = X_canon.squeeze(0)
-        # 将相机坐标系的点变换到世界坐标系
+        # 每个关键帧都先在自己的相机系里存点，再统一变换到世界系拼接。
         pW = keyframe.T_WC.act(keyframe.X_canon).cpu().numpy().reshape(-1, 3)
         # 获取对应的颜色
         color = (keyframe.uimg.cpu().numpy() * 255).astype(np.uint8).reshape(-1, 3)
-        # 按置信度过滤
+        # 最终导出的 PLY 质量高度依赖这个阈值：阈值低会更密，但噪点更多。
         valid = (
             keyframe.get_average_conf().cpu().numpy().astype(np.float32).reshape(-1)
             > c_conf_threshold
@@ -141,6 +144,7 @@ def save_keyframes(savedir, timestamps, keyframes: SharedKeyframes):
     """
     savedir = pathlib.Path(savedir)
     savedir.mkdir(exist_ok=True, parents=True)
+    # 保存关键帧原图常用于人工检查：看关键帧选择是否合理、是否出现明显模糊或失配。
     for i in range(len(keyframes)):
         keyframe = keyframes[i]
         t = timestamps[keyframe.frame_id]
@@ -164,6 +168,7 @@ def save_ply(filename, points, colors):
         points: ndarray, shape (N, 3) — 3D 坐标
         colors: ndarray, shape (N, 3) — RGB 颜色值 (0-255)
     """
+    # PLY 导出是最终展示层，不参与优化，因此这里不再保留置信度等额外字段。
     colors = colors.astype(np.uint8)
     # Combine XYZ and RGB into a structured array
     # 创建结构化数组，包含坐标和颜色信息

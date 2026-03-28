@@ -33,6 +33,8 @@ class RetrievalDatabase(Retriever):
     def __init__(self, modelname, backbone=None, device="cuda"):
         super().__init__(modelname, backbone, device)
 
+        # `ivf_builder` 是增量式倒排文件的核心容器。
+        # 与离线一次性建库不同，这里要支持“每来一张关键帧就立即可检索、可入库”。
         self.ivf_builder = self.asmk.create_ivf_builder()
 
         self.kf_counter = 0
@@ -44,7 +46,8 @@ class RetrievalDatabase(Retriever):
             device=self.query_device, dtype=self.query_dtype
         )
 
-    # Mirrors forward_local in extract_local_features from retrieval/model.py
+    # 这一步复用了上游检索模型的局部特征提取逻辑，
+    # 但跳过了编码阶段，因为 `frame.feat` 已经由主模型提前缓存好了。
     def prep_features(self, backbone_feat):
         retrieval_model = self.model
 
@@ -64,21 +67,26 @@ class RetrievalDatabase(Retriever):
         return topk_features
 
     def update(self, frame, add_after_query, k, min_thresh=0.0):
+        # `update` 是在线阶段最常用的接口：
+        # 先拿当前关键帧去查数据库，再决定要不要把它自己也插进去。
         feat = self.prep_features(frame.feat)
         id = self.kf_counter  # Using own counter since otherwise messes up IVF
 
         feat_np = feat[0].cpu().numpy()  # Assumes one frame at a time!
         id_np = id * np.ones(feat_np.shape[0], dtype=np.int64)
 
+        # 这里统计的是“数据库里已有多少张图像”，而不是局部特征个数。
         database_size = self.ivf_builder.ivf.n_images
         # print("Database size: ", database_size, self.kf_counter)
 
-        # Only query if already an image
+        # 第一张关键帧没有可检索对象，因此只能入库不能查询。
         topk_image_inds = []
         topk_codes = None  # Change this if actualy querying
         if self.kf_counter > 0:
             ranks, ranked_scores, topk_codes = self.query(feat_np, id_np)
 
+            # `ivf.search()` 返回的是排序后的名次和分数，
+            # 这里把它还原成按图像 id 排列的 score 向量，再取 top-k。
             scores = np.empty_like(ranked_scores)
             scores[np.arange(ranked_scores.shape[0])[:, None], ranks] = ranked_scores
             scores = torch.from_numpy(scores)[0]
@@ -96,6 +104,7 @@ class RetrievalDatabase(Retriever):
 
     # The reason we need this function is becasue kernel and inverted file not defined when manually updating ivf_builder
     def query(self, feat, id):
+        # 查询与建库使用的参数可能不完全相同，因此单独取 query 配置。
         step_params = self.asmk.params.get("query_ivf")
 
         images2, ranks, scores, topk = self.accumulate_scores(
@@ -110,6 +119,7 @@ class RetrievalDatabase(Retriever):
         return ranks, scores, topk
 
     def add_to_database(self, feat_np, id_np, topk_codes):
+        # 若当前帧刚刚查询过，则可复用 query 阶段已经算好的量化码，少做一次量化。
         self.add_to_ivf_custom(feat_np, id_np, topk_codes)
 
         # Bookkeeping
@@ -117,7 +127,8 @@ class RetrievalDatabase(Retriever):
         self.kf_counter += 1
 
     def quantize_custom(self, qvecs, params):
-        # Using trick for efficient distance matrix
+        # 这里显式计算“特征到视觉词中心”的平方距离矩阵。
+        # 用展开公式避免真的构造 `(q-c)^2`，更适合 GPU 批量计算。
         l2_dists = (
             torch.sum(qvecs**2, dim=1)[:, None]
             + torch.sum(self.centroids**2, dim=1)[None, :]
@@ -132,6 +143,7 @@ class RetrievalDatabase(Retriever):
         inverted_file and parameters."""
         similarity_func = lambda *x: kern.similarity(*x, **params["similarity"])
 
+        # 每张 query image 的局部特征会先量化、再聚合，最后在倒排文件上做检索。
         acc = []
         slices = list(io_helpers.slice_unique(qimids))
         for imid, seq in slices:
@@ -141,6 +153,7 @@ class RetrievalDatabase(Retriever):
             )
             topk_inds = self.quantize_custom(qvecs_torch, params)
             topk_inds = topk_inds.cpu().numpy()
+            # 量化结果决定这张图会命中哪些视觉词桶，是后续 IVF 检索的入口。
             quantized = (qvecs, topk_inds)
 
             aggregated = kern.aggregate_image(*quantized, **params["aggregate"])
@@ -170,6 +183,7 @@ class RetrievalDatabase(Retriever):
         step_params = self.asmk.params.get("build_ivf")
 
         if topk_codes is None:
+            # 如果此前没做过查询，就在入库时单独量化一次。
             qvecs_torch = torch.from_numpy(vecs).to(
                 device=self.query_device, dtype=self.query_dtype
             )
@@ -181,6 +195,7 @@ class RetrievalDatabase(Retriever):
             k = step_params["quantize"]["multiple_assignment"]
             topk_inds = topk_codes[:, :k]
 
+        # 入库时除了局部特征和码字，还要保留“这些特征属于哪张图”。
         quantized = (vecs, topk_inds, imids)
 
         aggregated = ivf_builder.kernel.aggregate(

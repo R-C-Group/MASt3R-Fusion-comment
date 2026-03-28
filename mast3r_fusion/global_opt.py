@@ -137,6 +137,8 @@ else:
         return l_c
 
 def getPoses(indice,pose_data,wTcs,ss):
+    # 把内部维护的 `(Pose3, scale)` 表示重新打包成 lietorch.Sim3 所需的 8 维向量。
+    # 这个函数主要用于“GTSAM 结果 -> 共享关键帧 / 视觉模块”回写。
     all_cs = []
     for iii in range(0,pose_data.shape[0]):
         T_temp = wTcs[indice[iii]]
@@ -145,6 +147,9 @@ def getPoses(indice,pose_data,wTcs,ss):
     return torch.stack(all_cs)
 
 def getPosesRel(indice,pose_data,wTcs,ss,enable_ms):
+    # 与 `getPoses` 不同，这里返回的是供对齐后端使用的“局部相对参数化”。
+    # 当 `enable_ms=True` 时，会把第一个关键帧当作局部参考原点，
+    # 减少数值尺度过大时对优化稳定性的影响。
     all_cs = []
     for iii in range(0,pose_data.shape[0]):
         T_temp = wTcs[indice[iii]]
@@ -165,6 +170,10 @@ class FactorGraph:
         self.frames = frames
         self.device = device
         self.cfg = config["local_opt"]
+        # 下面这些张量共同描述“当前滑窗内已经建立好的视觉边”：
+        # - ii / jj: 边连接的关键帧编号
+        # - idx_*: 像素匹配索引
+        # - valid_match_* / Q_*: 匹配有效性与不确定度
         self.ii = torch.as_tensor([], dtype=torch.long, device=self.device)
         self.jj = torch.as_tensor([], dtype=torch.long, device=self.device)
         self.idx_ii2jj = torch.as_tensor([], dtype=torch.long, device=self.device)
@@ -185,6 +194,7 @@ class FactorGraph:
         self.subpixel_factor = config["ms_opt"]['subpixel_factor']
         self.d_diff_threshold = config["ms_opt"]['d_diff_threshold']
         self.window_num = config["ms_opt"]['window_num']
+        # `retain_num` 会比优化窗口略大，给边缘化与写盘留出过渡区。
         self.retain_num = self.window_num + 10 # reserved for marginalization
         self.frames_to_save = []
 
@@ -192,6 +202,9 @@ class FactorGraph:
         self.poses_ref = {}
         self.poses_stamps = {}
         self.Tic = np.copy(calib['Tic'])
+        # 这些 Python 列表保存的是 GTSAM 语义下的状态缓存。
+        # 注意它们和 `SharedKeyframes` 里存的 Sim3 位姿不是简单重复关系：
+        # 一个偏向视觉模块使用，一个偏向图优化内部求解使用。
         self.wTcs           = []
         self.ss             = []
         self.vs             = []
@@ -267,6 +280,8 @@ class FactorGraph:
 
 
     def save_graph(self, path):
+        # 这里导出的不是“当前 GTSAM 图对象的快照”，而是足够在离线阶段
+        # 重建视觉/IMU约束的轻量中间表示。
 
         fix_noise = 1e-6
 
@@ -294,7 +309,8 @@ class FactorGraph:
         print('len factors:', len(self.all_factors))
         if pin > self.last_pin:
             print('Marginalization!!!',pin,self.last_pin)
-            # Marginalization
+            # 这一步把已经离开在线窗口、但仍然需要保留信息的视觉边导出。
+            # 在线求解不再继续携带这些旧变量，离线阶段再统一接管。
             marg_graph = gtsam.NonlinearFactorGraph()
             Xs, T_WCs, Cs = self.get_poses_points(unique_kf_idx[self.last_pin:])
             img_size = self.frames.last_keyframe().img.shape[-2:]
@@ -368,6 +384,8 @@ class FactorGraph:
         pickle.dump(self.all_factors,open(path,'wb'))
 
     def add_factors(self, ii, jj, min_match_frac, is_reloc=False):
+        # 对给定关键帧对执行一次“对称匹配 -> 质量过滤 -> 写入视觉边缓存”。
+        # 注意这里还没有真正调用 GTSAM，只是在累积后端求解所需的数据。
         # print('1',time.time())
         kf_ii = [self.frames[idx] for idx in ii]
         kf_jj = [self.frames[idx] for idx in jj]
@@ -419,7 +437,8 @@ class FactorGraph:
         ii_tensor = torch.as_tensor(ii, device=self.device)
         jj_tensor = torch.as_tensor(jj, device=self.device)
 
-        # NOTE: Saying we need both edge directions to be above thrhreshold to accept either
+        # 只有双向匹配都足够好，这条边才真正可信。
+        # 这样做虽然保守，但能显著减少单向错配把 Hessian 拉坏的风险。
         invalid_edges = torch.minimum(match_frac_j, match_frac_i) < min_match_frac
         invalid_edges_orig = invalid_edges.clone()
         consecutive_edges = ii_tensor == (jj_tensor - 1)
@@ -482,6 +501,7 @@ class FactorGraph:
                 plt.savefig('temp/%d_%d.jpg'%(self.ii[iiii].item(),self.jj[iiii].item()))
                 plt.close('all')
 
+        # 边缓存也要做“软滑窗”裁剪，否则随着序列增长会无限膨胀。
         retain_mask = torch.logical_not(torch.logical_and(self.ii<torch.max(self.ii)-20,self.jj<torch.max(self.jj)-self.retain_num))
         self.ii = self.ii[retain_mask]
         self.jj = self.jj[retain_mask]
@@ -502,6 +522,7 @@ class FactorGraph:
         return torch.arange(0,torch.max(torch.cat([self.ii, self.jj])+1))
 
     def prep_two_way_edges(self):
+        # 把单向缓存扩成双向约束，便于后端以统一形式构建视觉残差。
         ii = torch.cat((self.ii, self.jj), dim=0)
         jj = torch.cat((self.jj, self.ii), dim=0)
         idx_ii2jj = torch.cat((self.idx_ii2jj, self.idx_jj2ii), dim=0)
@@ -520,6 +541,8 @@ class FactorGraph:
 
 
     def predict_pose(self,frame_id,kf_idx=-1):
+        # 使用最近关键帧状态 + 两个时间戳之间的 IMU 预积分，预测当前帧位姿。
+        # 它主要服务于在线阶段的关键帧选择与短时轨迹平滑，而不是最终结果。
         if kf_idx == -1:
             kf_idx = len(self.bs)-1
         new_preintegration =  gtsam.PreintegratedCombinedMeasurements(self.params,self.bs[kf_idx])
@@ -534,6 +557,8 @@ class FactorGraph:
 
     def solve_GN_calib(self,use_calib_this_file = False):
         print("solve_GN_calib!!!!")
+        # 这是整个在线后端的核心入口。函数名里虽然带 GN，
+        # 但实际上视觉部分先通过 AlignCore 线性化，再交给 GTSAM 的 LM 做联合求解。
         
         fix_noise = 1e-6
 
@@ -558,17 +583,20 @@ class FactorGraph:
         
         
 
+        # `pin` 定义当前优化窗口的起点，全局编号小于它的关键帧会逐步被边缘化。
         pin = max(unique_kf_idx[-1].item()-self.window_num,0)
         print('[INFO] marg',time.time())
         if pin > self.last_pin:
             print('Marginalization!!!',pin,self.last_pin)
-            # Marginalization
+            # 边缘化阶段的目标不是“删除旧信息”，而是把旧变量的影响压缩成先验因子，
+            # 继续作用在保留窗口上。
             marg_graph = gtsam.NonlinearFactorGraph()
             Xs, T_WCs, Cs = self.get_poses_points(unique_kf_idx[self.last_pin:])
             img_size = self.frames.last_keyframe().img.shape[-2:]
             Xs = constrain_points_to_ray(img_size, Xs, K)
             ii, jj, idx_ii2jj, valid_match, Q_ii2jj = self.prep_two_way_edges()
 
+            # 这些关键帧一旦真正离开窗口，就可以安全地安排写入 H5。
             for iiii in range(self.last_pin,pin):
                 self.frames_to_save.append(iiii)
             marg_mask = torch.logical_and(torch.logical_and(torch.logical_and(ii >= self.last_pin,jj>=self.last_pin),torch.logical_or(ii < pin,jj<pin)),
@@ -598,17 +626,17 @@ class FactorGraph:
 
             pose_data = T_WCs.data[:, 0, :]
             pose_data_new = getPosesRel(np.arange(pin,pin+pose_data.shape[0]),pose_data,self.wTcs,self.ss,self.enable_ms)
-            aligncore = mast3r_fusion_backends.AlignCoreCalib()
+            aligncore = mast3r_fusion_backends.AlignCoreCalib() #cuda部分的代码实现
             aligncore.init(
-                pose_data_new,
-                Xs,
-                Cs,
+                pose_data_new, #当前线性化点/当前相对位姿
+                Xs, # 3D points
+                Cs, # confidence 置信度
                 K,
                 ii, # edge
                 jj, # edge
-                idx_ii2jj, # matching
-                valid_match, # mask
-                Q_ii2jj, # uncertainty
+                idx_ii2jj, # matching （这个是匹配的索引/对应关系）
+                valid_match, # mask (有效掩码)
+                Q_ii2jj, # uncertainty (不确定性/权重)
                 height,
                 width,
                 pixel_border,
@@ -704,6 +732,7 @@ class FactorGraph:
                 marg_graph.add(factor)
             if not(self.marg_factor is None): 
                 marg_graph.add(self.marg_factor)
+            # `marginalizeOut` 产出的先验因子会替代旧变量继续留在图里。
             self.marg_factor = gtsam.marginalizeOut(marg_graph,initials,keys_to_marg)
             self.marg_factor = self.marg_factor.rekey((np.array(self.marg_factor.keys())-(new_pin-pin)).tolist())
             del aligncore
@@ -716,8 +745,8 @@ class FactorGraph:
 
         img_size = self.frames.last_keyframe().img.shape[-2:]
 
-        # Constrain points to ray
-        #! Calibration is needed in current version
+        # 视觉后端默认在“射线一致”的几何假设下工作，因此先把点重新约束回像素射线。
+        # 当前版本也基本依赖相机标定来稳定这一步。
         Xs = constrain_points_to_ray(img_size, Xs, K)
 
         ii, jj, idx_ii2jj, valid_match, Q_ii2jj = self.prep_two_way_edges()
@@ -738,6 +767,7 @@ class FactorGraph:
         prior_factors = []
 
         T_WCs64 = lietorch.Sim3(T_WCs.data.to(torch.float64))
+        # 对于新进入窗口、之前还没有 IMU 状态缓存的关键帧，这里补齐默认值。
         while len(self.bs) < T_WCs.shape[0] + pin:
             iii = len(self.bs) - pin
             self.bs.append(gtsam.imuBias.ConstantBias(np.array([.0,.0,.0]),np.array([.0,.0,.0])))
@@ -749,6 +779,8 @@ class FactorGraph:
 
         aligncore = mast3r_fusion_backends.AlignCoreCalib()
         for i in range(self.cfg['max_iters']):
+            # 每一轮都重新线性化视觉残差，再把视觉因子、IMU 因子、外参因子、
+            # 边缘化先验一起送进 GTSAM 做一次小步 LM。
             # print('time1',time.time())
             pose_data_new = getPosesRel(np.arange(pin,pin+pose_data.shape[0]),pose_data,self.wTcs,self.ss,self.enable_ms)
             aligncore.init(
@@ -861,7 +893,8 @@ class FactorGraph:
             # print('3',time.time())
             # print('time3',time.time())
 
-            # Visual constraint
+            # 视觉因子提供相对几何约束；
+            # prior_factors 则承载 IMU、外参、初始先验和边缘化先验。
             for h_factor in vfactors:
                 cur_graph.add(h_factor)
             for factor in prior_factors:
@@ -894,7 +927,7 @@ class FactorGraph:
         print('[INFO] after optim.',time.time())
         print(keys2str(initials.keys()))
 
-        # Update the keyframe T_WC
+        # 求解完成后，把优化结果同步回共享关键帧缓存，供前端与可视化继续使用。
         self.frames.update_T_WCs(T_WCs, unique_kf_idx[pin:])
 
         if T_WCs.shape[0] == 7:
@@ -905,7 +938,12 @@ class FactorGraph:
 
 
     def solve_VI_init(self):
-        """ initialize the V-I system, referring to VIN-Fusion """
+        """
+        初始化视觉-惯性系统，思路参考 VINS-Fusion。
+
+        触发条件被刻意设置得很保守：只有积累到足够数量的关键帧后，才尝试
+        从纯视觉轨迹中恢复 IMU 相关的重力、速度、偏置和尺度。
+        """
 
         pin = 0
         unique_kf_idx = self.get_unique_kf_idx()
@@ -936,6 +974,8 @@ class FactorGraph:
             tmp_g = preintegrations[iii].deltaVij()/dt
             var_g += np.linalg.norm(tmp_g - aver_g)**2
         var_g =math.sqrt(var_g/ccount)
+        # 这里原本应该检查 IMU 激励是否充足；当前阈值判断较松，
+        # 但整体流程仍保留了“先估计、再整体回写”的结构。
         if var_g < 0.0:
             print("IMU excitation not enough!")
         else:
@@ -944,6 +984,8 @@ class FactorGraph:
                 T_WC = T_WCs[iii,0].matrix().cpu().numpy()
                 T_WC[0:3,0:3] /= T_WCs[iii,0].data[-1].item()
                 wTcs.append(T_WC)
+            # V-I 对齐输出的是 IMU 体坐标系轨迹 `wTbs`，
+            # 需要再乘回 `Tic` 才能重新得到相机轨迹。
             vi_result = VisualIMUAlignment(self.Tic, np.array(wTcs), preintegrations, ignore_lever= True)
             print(vi_result)
             all_cs = []
@@ -963,6 +1005,7 @@ class FactorGraph:
                 self.wTcs[iii] = T_WC
                 self.ss[iii] = T_WCs64[iii,0].data[-1].item()
                 self.bs[iii] = vi_result['bs'][iii]
+            # 用信号量通知外层：系统已从纯视觉阶段切到多传感器联合阶段。
             self.init_vi_signal = True
             self.enable_ms = True
             print(vi_result)

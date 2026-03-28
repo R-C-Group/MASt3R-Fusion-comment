@@ -109,6 +109,8 @@ if __name__ == "__main__":
 
     def mini_solve(cfg, K, img_shape, Xs, T_WCs, Cs, ii,jj,idx_ii2jj,valid_match,Q_ii2jj, ii_orig, jj_orig):
         global all_factors
+        # `mini_solve` 只针对单个候选回环对构建一个很小的局部图。
+        # 它的目标不是全局最优，而是回答“这条回环边值不值得加入全局图”。
         C_thresh       = cfg["C_conf"]
         Q_thresh       = cfg["Q_conf"]
         pixel_border   = cfg["pixel_border"]
@@ -137,6 +139,7 @@ if __name__ == "__main__":
         ss_temp = pose_data[:,7].cpu().numpy()
 
 
+        # 这里采用“反复线性化 + 小步 LM”的做法来稳定验证回环几何。
         for i in range(10):
             pose_data_new = getPosesRel(unique_kf_idx,pose_data,wTcs_temp,ss_temp,True)
             aligncore = mast3r_fusion_backends.AlignCoreCalib()
@@ -178,7 +181,8 @@ if __name__ == "__main__":
                 symbols.append(X(iii))
                 prior_factors.append(gtsam.PriorFactorDouble(S(iii),ss_temp[iii], gtsam.noiseModel.Diagonal.Sigmas([0.0001])))
 
-            # Visual constraint
+            # 这个局部图几乎只靠视觉因子和尺度先验，
+            # 用来快速验证该回环边是否自洽。
             for h_factor in vfactors:
                 cur_graph.add(h_factor)
             for factor in prior_factors:
@@ -200,6 +204,8 @@ if __name__ == "__main__":
                                                      'params':[wTcs_temp[ii[iii]],ss_temp[ii[iii]],wTcs_temp[jj[iii]],ss_temp[jj[iii]]]})
 
     def find_valid_numbers(a, b):
+        # 离线回环候选的过滤比在线阶段更宽松一些，
+        # 因为这里允许搜索更远的时间跨度。
         result = []
         for i, c in enumerate(b):
             if abs(c - a) <= 5:
@@ -241,6 +247,8 @@ if __name__ == "__main__":
 
 
     def gen_conf_map_vec(x_d, dl, dn):
+        # 这张“置信图”不是网络输出，而是基于轨迹传播误差构建的启发式量。
+        # 它衡量的是：沿着局部里程计一路走到另一个时刻后，位置不确定度会长到多大。
         N = x_d.shape[0]
         values = np.zeros((N, N))
         Rr = np.array([[0, 1], [-1, 0]])
@@ -335,7 +343,8 @@ if __name__ == "__main__":
         retrieval_inds = find_valid_numbers(i,retrieval_inds)
 
         for kkk in retrieval_inds:
-            # candidate filtering based on ``conf_map''
+            # 先用检索提候选，再用几何置信图做第二层过滤。
+            # 这样能在保证召回的同时，尽量少让明显不可能闭环的帧对进入精配准。
             T0 = lietorch.Sim3(T_WC_map[i][0]).matrix()
             T1 = lietorch.Sim3(T_WC_map[kkk][0]).matrix()
             interest_distance = config['loop']['interest_distance']
@@ -363,6 +372,8 @@ if __name__ == "__main__":
             frame_kkk.feat = data_kkk['feat'].to('cuda')
             frame_kkk.pos = data_kkk['pos'].to('cuda')
 
+            # 这里把回环配准抽象成“只有两个节点的一条边”，
+            # 便于复用在线后端同样的视觉因子构造逻辑。
             ii = torch.tensor([0])
             jj = torch.tensor([1])
             (

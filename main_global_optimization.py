@@ -85,7 +85,9 @@ def Align2GTSAM_factors(H11: np.ndarray, v11: np.ndarray, lin_list, wTcs, ss, ii
         i = ii[idx] - pin
         j = jj[idx] - pin
 
-        # correct ddx
+        # `lin_list` 记录的是视觉因子在线性化时所使用的位姿展开点。
+        # 如果当前全局优化的状态已经偏离那个展开点，就要补一个 `ddx`
+        # 来修正梯度项，否则 HessianFactor 的线性化中心就错了。
         wTc0 = lin_list[idx][0] 
         s0 = lin_list[idx][1] 
         wTc1 = lin_list[idx][2] 
@@ -226,10 +228,10 @@ if __name__ == "__main__":
     noise = np.array(config['global_opt']['imu_noise'])
     
 
-    # Notice that we have 3 sets of IMU params!
-    # one for initialization of the graph
-    # one for common cases
-    # one for bad IMU cases
+    # 这里准备三套 IMU 预积分参数：
+    # 1. `params_init`: 前几轮更稳健的初始化参数
+    # 2. `params`: 正常情况下的标准参数
+    # 3. `params_loose`: 当 IMU 时间间隔异常时使用的宽松参数
     accel_noise_sigma = noise[0] * 1
     gyro_noise_sigma = noise[1]  * 1
     accel_bias_rw_sigma = noise[2] * 1
@@ -359,6 +361,8 @@ if __name__ == "__main__":
     t_list = np.array(sorted(all_t.values()))
 
     #! GNSS alignment (optional)
+    # 如果有 GNSS，就先把局部轨迹粗对齐到 ENU 全局坐标系；
+    # 如果没有，后面的优化仍然能在局部坐标系里完成。
     if len(all_gnss) < 1:
         xyz_ref = np.array([0,0,0])
         dT = np.eye(4,4)
@@ -411,6 +415,7 @@ if __name__ == "__main__":
         cur_graph = gtsam.NonlinearFactorGraph()
 
         #! Add visual factors
+        # 在线阶段已经把视觉残差压成 Hessian 因子，这里直接恢复到 GTSAM 图中。
         vfactors = Align2GTSAM_factors(H_list[None],v_list[None],lin_list, wTcs_list,ss_list,ii_list,jj_list,0)
         for vf in vfactors:
             cur_graph.add(vf)
@@ -426,6 +431,7 @@ if __name__ == "__main__":
         initials.insert(C(0),gtsam.Pose3(Tic))
 
         #! Add IMU factors, extrinsic factors
+        # 全局图的骨架来自 IMU 连续约束和相机-IMU 外参约束。
         prior_factors = []
         prior_factors.append(gtsam.PriorFactorPose3(C(0),gtsam.Pose3(Tic), gtsam.noiseModel.Diagonal.Sigmas(np.array([1e-4,1e-4,1e-4,1e-4,1e-4,1e-4]))))
         for iii in range(0,CCCCC):
@@ -458,6 +464,8 @@ if __name__ == "__main__":
         
 
         #! Add loop factors
+        # 回环因子采取“先宽松接入，再逐步筛选”的策略：
+        # 早期迭代先让图整体收拢，后期再按几何一致性剔除明显异常回环。
         ii_loop_list = []
         jj_loop_list = []
         H_loop_list = []
@@ -519,6 +527,8 @@ if __name__ == "__main__":
                 cur_graph.add(vf)
 
         #! Add GNSS factors
+        # GNSS 并不是直接约束关键帧节点，而是通过 IMU 预积分桥接到一个中间状态节点，
+        # 这样可以自然处理 GNSS 与关键帧时间不同步的问题。
         for i in range(all_gnss.shape[0]):
             tt = all_gnss[i,0]
             pos_global = np.array(trans.cart2enu(xyz_ref,all_gnss[i,1:4] - xyz_ref))
@@ -554,7 +564,7 @@ if __name__ == "__main__":
             cur_graph.push_back(gnss_factor)
             cur_graph.push_back(ff)
 
-        # let's go!
+        # 统一交给 LM 做一轮全局求解，然后把结果回写到数组，供下一轮继续线性化。
         opt_params = gtsam.LevenbergMarquardtParams()
         opt_params.setMaxIterations(20)
         opt_params.setVerbosityLM("SUMMARY") 
@@ -585,6 +595,7 @@ if __name__ == "__main__":
     # plt.savefig('test_bias.png')
 
     #! Output results
+    # 输出文件除了位姿，还写入偏置、尺度和参考原点，方便后处理阶段完整复原轨迹语义。
     t_series = []
     x_series = []
     y_series = []
