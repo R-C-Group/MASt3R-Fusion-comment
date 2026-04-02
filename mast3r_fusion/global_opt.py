@@ -190,6 +190,14 @@ class FactorGraph:
         self.viz_matching = False
 
 
+        # `enable_excalib` 控制“是否允许在线优化相机-IMU 外参 Tic”。
+        #
+        # 需要特别区分两件事：
+        # 1. `use_calib=True` 只是“使用已有标定文件中的 Tic/K”；
+        # 2. `enable_excalib=True` 才是“把外参作为变量放进在线图优化里继续估计”。
+        #
+        # 因此，默认配置若为 False，则系统虽然会使用外参，
+        # 但本质上是把它当作固定先验，而不是在线标定对象。
         self.enable_excalib = config["ms_opt"]['enable_excalib']
         self.subpixel_factor = config["ms_opt"]['subpixel_factor']
         self.d_diff_threshold = config["ms_opt"]['d_diff_threshold']
@@ -672,6 +680,8 @@ class FactorGraph:
             prior_factors = []
             for iii in range(0,T_WCs.shape[0]):
                 initials.insert(X(iii),gtsam.Pose3(self.wTcs[iii+pin]))
+                # `S(iii)` 是每个关键帧的尺度变量。
+                # 它在 V-I 初始化后不会被冻结，而是会继续作为图优化变量参与后续在线优化。
                 initials.insert(S(iii),self.ss[iii+pin])
                 symbols.append(S(iii))
                 symbols.append(X(iii))
@@ -870,7 +880,13 @@ class FactorGraph:
                         # Extrinsic constraint (i -> c)
                         prior_factors.append(gtsam_unstable.ExPoseConstraintFactor(Z(iii),X(iii),C(iii), gtsam.noiseModel.Diagonal.Sigmas(np.array([1e-4,1e-4,1e-4,1e-4,1e-4,1e-4]))))
 
-                        # Extrinsic constraint (prioir)
+                        # Extrinsic constraint (prior)
+                        #
+                        # 这里正是“当前代码是否真的在做在线外参估计”的关键分支：
+                        # - 当 `enable_excalib=False` 时，每个 C(iii) 都被强先验绑到当前 `self.Tic`，
+                        #   实际效果接近“固定外参，只是把它写进图里参与约束”。
+                        # - 当 `enable_excalib=True` 时，只对首个外参加较弱先验，并用
+                        #   BetweenFactor 把各帧外参连成同一个常量，从而允许在线微调外参。
                         if self.enable_excalib:
                             if iii + pin == 0:
                                 prior_factors.append(gtsam.PriorFactorPose3(C(iii),gtsam.Pose3(self.Tic), gtsam.noiseModel.Diagonal.Sigmas(np.array([1,1,1,1,1,1])*0.1)))
@@ -913,9 +929,13 @@ class FactorGraph:
 
             for iii in range(0,T_WCs.shape[0]):
                 if self.enable_ms:
+                    # 若开启了在线外参估计，则这里会把优化后的 `C(0)` 回写到 `self.Tic`。
+                    # 若未开启，`C(0)` 仍基本等于初始标定值，因为前面被强先验锁住。
                     self.Tic = cur_result.atPose3(C(0)).matrix()
                     self.bs[iii+pin] = cur_result.atConstantBias(B(iii))
                     self.vs[iii+pin] = cur_result.atVector(V(iii))
+                # 这里直接回答“V-I 初始化后的尺度是否继续优化”：
+                # 会。初始化只负责提供尺度初值，后续每轮在线 LM 都会继续更新 `S(iii)`。
                 self.ss[iii+pin] = cur_result.atDouble(S(iii))
                 self.wTcs[iii+pin] = cur_result.atPose3(X(iii)).matrix()
                 # print(self.bs[iii],self.vs[iii])
@@ -993,6 +1013,9 @@ class FactorGraph:
                 print(vi_result['wTbs'][iii])
                 T_temp = vi_result['wTbs'][iii] @ self.Tic
                 # T_temp[0:3,3] += 1000.0
+                # 这里把 V-I 初始化求出的全局尺度 `vi_result['s']` 乘回当前窗口的 Sim3 尺度。
+                # 注意这一步只是“设置尺度初值”，不是最终定值；
+                # 初始化完成后，`solve_GN_calib()` 仍会继续把 `S(iii)` 当变量优化。
                 dd = np.concatenate([T_temp[0:3,3],Rotation.from_matrix(T_temp[0:3,0:3]).as_quat(),np.array([T_WCs[iii,0].data[-1].item() * vi_result['s']])])
                 all_cs.append(torch.tensor(dd[None].astype(np.float32),device='cuda'))
             T_WCs = lietorch.Sim3(torch.stack(all_cs))
@@ -1003,6 +1026,9 @@ class FactorGraph:
                 T_WC = T_WCs64[iii,0].matrix().cpu().numpy()
                 T_WC[0:3,0:3] /= T_WCs64[iii,0].data[-1].item()
                 self.wTcs[iii] = T_WC
+                # 这里写回的是“初始化后的尺度状态缓存”。
+                # 后续在线优化阶段会从这个值出发继续估计，因此它既不是纯视觉旧尺度，
+                # 也不是一次性固定不变的最终尺度。
                 self.ss[iii] = T_WCs64[iii,0].data[-1].item()
                 self.bs[iii] = vi_result['bs'][iii]
             # 用信号量通知外层：系统已从纯视觉阶段切到多传感器联合阶段。
