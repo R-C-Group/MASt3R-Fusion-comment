@@ -61,21 +61,23 @@ class FrameTracker:
         self.idx_f2k = None
 
     def track(self, frame: Frame):
-        keyframe = self.keyframes.last_keyframe()
+        keyframe = self.keyframes.last_keyframe() #读取最后一个关键帧（最新关键帧），始终以滑动窗口里最后一个关键帧为参考，不做多关键帧选参考。
 
         # 非对称匹配只解码“当前帧看关键帧”这一方向，
-        # 这是在线跟踪场景的速度优先设计：相比对称匹配更省时。
+        # 这是在线跟踪场景的速度优先设计：相比对称匹配更省时。   采用MASt3R的匹配
         idx_f2k, valid_match_k, Xff, Cff, Qff, Xkf, Ckf, Qkf = mast3r_match_asymmetric(
             self.model, frame, keyframe, idx_i2j_init=self.idx_f2k
         )
+        # Xff,Cff 表示当前帧侧点云/置信度；Xkf,Ckf 表示在关键帧图像上、与当前帧建立对应后的那侧量；Qff,Qkf 为描述子匹配置信度。
+
         # 保存匹配索引用作下一帧的初始化，相当于延续一个局部光流/配准先验。
-        self.idx_f2k = idx_f2k.clone()
+        self.idx_f2k = idx_f2k.clone()#下一帧继续用 self.idx_f2k 作初值。
 
         # Get rid of batch dim
         idx_f2k = idx_f2k[0]
         valid_match_k = valid_match_k[0]
 
-        Qk = torch.sqrt(Qff[idx_f2k] * Qkf)
+        Qk = torch.sqrt(Qff[idx_f2k] * Qkf) #两侧 Q 相乘再开方，作观测权重。
 
         # 当前帧先更新自己的点图；后面位姿估计完成后，再把观测反投到关键帧坐标系，
         # 用来增量更新关键帧点图。
@@ -102,10 +104,12 @@ class FrameTracker:
         valid_Ck = Ck > self.cfg["C_conf"]
         valid_Q = Qk > self.cfg["Q_conf"]
 
+        # 既要有匹配，又要 3D 置信度、描述子 Q 过阈值。
         valid_opt = valid_match_k & valid_Cf & valid_Ck & valid_Q
         valid_kf = valid_match_k & valid_Q
 
         match_frac = valid_opt.sum() / valid_opt.numel()
+        # 若有效比例低于 min_match_frac：认为本帧无法做可靠位姿优化，则跳过，进入RELOC模式。
         if match_frac < self.cfg["min_match_frac"]:
             print(f"Skipped frame {frame.frame_id}")
             return False, [], True

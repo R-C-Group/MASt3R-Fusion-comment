@@ -95,7 +95,7 @@ def find_valid_numbers(a, b):
     return result
 
 
-def run_backend(states, keyframes):
+def run_backend(states, keyframes):#应该是MASt3R-Fusion相比起MASt3R SLAM最关键的差异。
     """
     运行一次后端优化迭代。
     
@@ -125,12 +125,12 @@ def run_backend(states, keyframes):
     idx = -1
     with states.lock:
         if len(states.global_optimizer_tasks) > 0:
-            idx = states.global_optimizer_tasks[0]
+            idx = states.global_optimizer_tasks[0] #得到本次要处理的全局关键帧索引 idx（若队列非空）。
     if idx == -1:
         return
 
     # ===========================
-    # 因子图边的构建
+    # 因子图边的构建：本轮整段逻辑都围绕上面取到的 idx：为它构图、优化。
     # ===========================
     # 当前待优化关键帧 `idx` 会连向两类历史帧：
     # 1. 连续帧，保证局部里程计链不断；
@@ -196,16 +196,16 @@ def run_backend(states, keyframes):
         states.edges_jj[:] = factor_graph.jj.cpu().tolist()
 
     # ===========================
-    # Gauss-Newton + LM 优化求解
+    # Gauss-Newton + LM 优化求解，前面添加了因子，此处做联合优化
     # ===========================
-    factor_graph.solve_GN_calib(config["use_calib"])
+    factor_graph.solve_GN_calib(config["use_calib"]) #执行求解时会有VI初始化
     
     # the fisrt time that VI init is finished
     # transform current states
     # 首次 V-I 初始化完成后，状态空间会从“纯视觉 Sim3”切换到
     # “视觉 + IMU 联合估计”。这里再做一次优化，是为了让重力、
     # 速度、偏置和外参约束稳定传播到窗口内所有关键帧。
-    if factor_graph.init_vi_signal:
+    if factor_graph.init_vi_signal: #VI初始化完成标志
         factor_graph.solve_GN_calib(config["use_calib"])  # 再优化一次
         factor_graph.init_vi_signal = False  # 清除信号
         states.T_WC[:] = factor_graph.frames.last_keyframe().T_WC[:].data
@@ -475,22 +475,22 @@ if __name__ == "__main__":
             keyframes.append(frame)                 # 添加为第一个关键帧
             # 队列中存的是“全局关键帧编号”，不是当前共享缓存里的局部位置。
             states.queue_global_optimization(len(keyframes) - 1 + keyframes.rollup_sum.value)  # 排入优化队列
-            states.set_mode(Mode.TRACKING)          # 切换到跟踪模式
+            states.set_mode(Mode.TRACKING)          # 切换到跟踪模式（应该只有第一帧如此）
             states.set_frame(frame)                 # 更新共享状态中的当前帧
             i += 1
             continue
 
-        if mode == Mode.TRACKING:
+        if mode == Mode.TRACKING: #只有在完成 INIT 之后、且未进入 RELOC 时，才用「当前帧 vs 最新关键帧」做前端跟踪。
             # ---- 跟踪模式 ----
             # 跟踪当前帧到最后一个关键帧的相对位姿
             # 返回:
             # - add_new_kf: 是否需要把当前帧升格为关键帧
-            # - match_info: 前端匹配的中间结果，主要供可视化/调试
-            # - try_reloc: 前端是否认为当前局部跟踪已不可靠
+            # - match_info: 前端匹配的中间结果（点云/置信度/Q 等列表），主要供可视化/调试（主流程里未再使用）
+            # - try_reloc: 前端是否认为当前局部跟踪已不可靠。在 tracker.py 里，仅当「进入优化的有效匹配比例 match_frac 低于 min_match_frac」时，会 return False, [], True，即 try_reloc=True，表示这一帧可匹配几何太少，无法可靠估计位姿，主程序于是 set_mode(Mode.RELOC)，下一帧会走单目重算点图等
             add_new_kf, match_info, try_reloc = tracker.track(frame)
             if try_reloc:
                 states.set_mode(Mode.RELOC)  # 跟踪丢失，切换到重定位模式
-            states.set_frame(frame)
+            states.set_frame(frame) #都会把当前帧（含已更新或退化的位姿/点图）写进 SharedStates，供可视化和共享内存读者使用
         elif mode == Mode.RELOC:
             # ---- 重定位模式 ----
             # RELOC 模式先恢复“当前帧自己的点图表达”，
@@ -508,7 +508,7 @@ if __name__ == "__main__":
         # using IMU prediction to adjust keyframe selectiion
         # 纯视觉关键帧选择容易被纹理质量影响，而 IMU 对“真实运动量”更敏感。
         # 因此在 VI 初始化完成后，用 IMU 预测来纠偏关键帧插入判据。
-        if factor_graph.enable_ms and frame.frame_id>100:
+        if factor_graph.enable_ms and frame.frame_id>100: #enable_ms 是一个布尔运行标志，默认 False，只在 视觉–惯性（VI）初始化成功完成之后被设为 True
             dd_old = keyframes.last_keyframe().T_WC.data.cpu().numpy()[0]
             dd_new = states.T_WC[0].data.cpu().numpy()
             # 利用 IMU 预积分预测从上一关键帧到当前帧的位姿变化

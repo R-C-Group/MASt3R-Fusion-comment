@@ -159,18 +159,18 @@ def mast3r_inference_mono(model, frame):
     # 初始化阶段用“自己和自己配对”的方式，让网络直接给出单帧点图。
     # 这不是严格意义的单目深度网络，而是复用 MASt3R 的双目接口。
     if frame.feat is None:
-        frame.feat, frame.pos, _ = model._encode_image(frame.img, frame.img_true_shape)
+        frame.feat, frame.pos, _ = model._encode_image(frame.img, frame.img_true_shape) #得到 ViT 特征 feat、位置编码 pos
 
     feat = frame.feat
     pos = frame.pos
     shape = frame.img_true_shape
 
-    res11, res21 = decoder(model, feat, feat, pos, pos, shape, shape)
+    res11, res21 = decoder(model, feat, feat, pos, pos, shape, shape) #把同一帧的特征和自己配对（feat, feat），等价于「伪双目」——输出 pixel-wise 3D 点 pts3d 和 置信度 conf。
     res = [res11, res21]
     X, C, D, Q = zip(
         *[(r["pts3d"][0], r["conf"][0], r["desc"][0], r["desc_conf"][0]) for r in res]
     )
-    # 4xhxwxc
+    # 4xhxwxc 下采样：downsample、拉平成 (H*W, 3) 的 Xii 和 (H*W, 1) 的 Cii 返回。
     X, C, D, Q = torch.stack(X), torch.stack(C), torch.stack(D), torch.stack(Q)
     X, C, D, Q = downsample(X, C, D, Q)
 
@@ -251,7 +251,7 @@ import matplotlib.pyplot as plt
 def mast3r_match_asymmetric(model, frame_i, frame_j, idx_i2j_init=None):
     # 非对称匹配是在线跟踪默认路径：只保留当前帧到关键帧的一侧结果，
     # 比对称版本更轻，适合逐帧运行。
-    X, C, D, Q = mast3r_asymmetric_inference(model, frame_i, frame_j)
+    X, C, D, Q = mast3r_asymmetric_inference(model, frame_i, frame_j) #对 (当前帧, 关键帧) 编码、解码，得到两视角点云/描述子/置信度等。
     
     b, h, w = X.shape[:-1]
     # 2 outputs per inference
@@ -262,6 +262,7 @@ def mast3r_match_asymmetric(model, frame_i, frame_j, idx_i2j_init=None):
     Dii, Dji = D[:b], D[b:]
     Qii, Qji = Q[:b], Q[b:]
 
+    # 在 3D 上建立当前帧每个 patch → 关键帧上对应 patch 的对应关系 idx_f2k；idx_i2j_init 用上一帧的 idx_f2k，缩小搜索、保持时序连续（类似粗光流）。
     idx_i2j, valid_match_j = matching.match(
         Xii, Xji, Dii, Dji, idx_1_to_2_init=idx_i2j_init
     )
