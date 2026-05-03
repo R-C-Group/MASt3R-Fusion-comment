@@ -77,8 +77,8 @@ def find_valid_numbers(a, b):
     3. 特别保留 a-2（即前第二帧），保证连续性约束
     
     参数:
-        a: 当前帧索引
-        b: 检索返回的候选帧索引列表
+        a: 当前帧索引（为当前关键帧在全局关键帧编号上的索引）
+        b: 检索返回的候选帧索引列表（为检索器返回的候选帧索引列表，顺序通常按相似度）
         
     返回:
         result: 过滤后的有效候选帧索引列表
@@ -115,8 +115,9 @@ def run_backend(states, keyframes):
         states: SharedStates 共享状态对象
         keyframes: SharedKeyframes 共享关键帧缓冲区
     """
-    mode = states.get_mode()
-    # 如果还在初始化或已暂停，直接返回
+    mode = states.get_mode() #读当前模式 
+
+    # 如果还在初始化或已暂停，直接返回，不执行后段优化
     if mode == Mode.INIT or states.is_paused():
         return
 
@@ -280,6 +281,7 @@ if __name__ == "__main__":
     
     # ===========================
     # 创建多进程通信队列
+    # 用 Manager() 托管出来的 manager.Queue()，队列对象通过Manager进程代理，跨进程传消息更稳妥，符合「主进程 + 独立可视化进程」结构
     # ===========================
     manager = mp.Manager()
     main2viz = new_queue(manager, args.no_viz)  # 主进程 → 可视化进程 的消息队列
@@ -290,7 +292,7 @@ if __name__ == "__main__":
     # ===========================
     # `dataset` 不只是图像读取器，还统一封装了时间戳、可选标定、
     # 缩放后图像尺寸等后续模块都会依赖的元数据。
-    dataset = load_dataset(args.dataset, args.stamp_path)
+    dataset = load_dataset(args.dataset, args.stamp_path) #按工程封装读序列（图像、时间戳、图像尺寸策略等
     dataset.subsample(config["dataset"]["subsample"], args.start_from, args.end_at)  # 子采样
     h, w = dataset.get_img_shape()[0]  # 获取缩放后的图像尺寸 (高, 宽)
     
@@ -311,7 +313,7 @@ if __name__ == "__main__":
             False, intrinsics.get("model","pinhole"), intrinsics.get("scale",1), intrinsics.get("height_new",None)
         )
     # 如果标定文件指定了新的图像高度（Mei 全景模型裁剪用）
-    if not (intrinsics.get("height_new",None) is None):
+    if not (intrinsics.get("height_new",None) is None): #若 YAML 里 height_new 非空，按比例改 h（全景等裁剪高度）。
         h = intrinsics.get("height_new",None) * w // intrinsics["width"]
 
     # ===========================
@@ -320,8 +322,9 @@ if __name__ == "__main__":
     # 这两个对象是多进程系统的“共享内存骨架”：
     # - `SharedKeyframes` 保存关键帧滑窗
     # - `SharedStates` 保存当前帧与系统模式
-    keyframes = SharedKeyframes(manager, h, w)   # 跨进程共享的关键帧缓冲区
+    keyframes = SharedKeyframes(manager, h, w)   # 跨进程共享的关键帧缓冲区（与frame.py 里 rollup_sum 配合做滑窗。）
     states = SharedStates(manager, h, w)         # 跨进程共享的系统状态
+    # 可视化进程与主进程通过这两个share_memory_()实现跨进程共享。
 
     # ===========================
     # 启动可视化进程（可选）
@@ -374,12 +377,12 @@ if __name__ == "__main__":
     # ===========================
     # 创建核心组件
     # ===========================
-    tracker = FrameTracker(model, keyframes, device)  # 帧跟踪器
+    tracker = FrameTracker(model, keyframes, device)  # 帧跟踪器 （前端 当前帧 ↔ 最后关键帧 匹配与 Sim3 优化）
     last_msg = WindowMsg()                             # 上一次可视化窗口消息
 
     # `FactorGraph` 名字上像“图结构”，实际上它同时维护视觉边、IMU 状态、
     # 当前滑窗变量、边缘化先验以及导出到离线阶段所需的图因子。
-    factor_graph = FactorGraph(model, keyframes, K, device, args)
+    factor_graph = FactorGraph(model, keyframes, K, device, args) #后端因子图、IMU、边缘化、轨迹文件 fp、frames_to_save 等；args 里常有 IMU 路径等。
     factor_graph.poses_stamps = dataset.timestamps  # 设置时间戳映射
     
     # 创建图像检索数据库
