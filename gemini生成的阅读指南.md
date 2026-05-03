@@ -4,6 +4,8 @@
 
 **MASt3R-Fusion** 是一个基于 [MASt3R](https://github.com/naver/mast3r)（多视角立体匹配网络）的 **视觉-惯性 SLAM（Simultaneous Localization And Mapping，同步定位与建图）** 系统。它将 MASt3R 的深度学习密集匹配能力与 IMU（惯性测量单元）数据融合，通过 GTSAM 因子图优化框架实现精确的位姿估计和三维重建。
 
+* PS：代码解读时，建议参考[MASt3R-SLAM](https://github.com/rmurai0610/MASt3R-SLAM)，对比来看会发现其实植入IMU部分并不多
+
 ### 核心特性
 
 | 特性         | 说明                                                              |

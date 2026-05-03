@@ -581,32 +581,38 @@ class FactorGraph:
         img_size = self.frames.last_keyframe().img.shape[-2:]
         height, width = img_size
 
-        K = self.K
-        pin = self.cfg["pin"]
-        pin = 0
+        # 原本MASt3R-SLAM在此处就执行了后端优化了，请见https://github.com/rmurai0610/MASt3R-SLAM/blob/e6f4e3d474fad0e11f561482012be864ba8c3f17/mast3r_slam/global_opt.py#L190
+
+        K = self.K #相机内参
+        pin = self.cfg["pin"] #本应表示当前优化窗口在全局关键帧编号上的起点（注释：小于 pin 的关键帧会被边缘化）。
+        pin = 0 #默认pin为0，表示从第一个关键帧开始优化
         unique_kf_idx = self.get_unique_kf_idx()
-        n_unique_kf = unique_kf_idx.numel()
-        if n_unique_kf <= pin:
+        n_unique_kf = unique_kf_idx.numel() #因子图里出现过的关键帧编号 0 .. max(ii,jj)。
+        if n_unique_kf <= pin: #窗口里没有足够关键帧，直接返回
             return
         
         
 
         # `pin` 定义当前优化窗口的起点，全局编号小于它的关键帧会逐步被边缘化。
+        # 随着最新关键帧编号变大，窗口起点 pin 向前滑，使固定长度 window_num 的窗口只保留最近一段关键帧参与后续大块优化；更早的关键帧准备通过边缘化压成先验。
         pin = max(unique_kf_idx[-1].item()-self.window_num,0)
         print('[INFO] marg',time.time())
-        if pin > self.last_pin:
+
+        # 如果当前优化窗口起点大于上一个优化窗口终点，则进行边缘化
+        if pin > self.last_pin: #窗口左边界向前移动了，要把 [last_pin, pin) 这一段变量从完整图里边缘化掉
             print('Marginalization!!!',pin,self.last_pin)
             # 边缘化阶段的目标不是“删除旧信息”，而是把旧变量的影响压缩成先验因子，
             # 继续作用在保留窗口上。
             marg_graph = gtsam.NonlinearFactorGraph()
-            Xs, T_WCs, Cs = self.get_poses_points(unique_kf_idx[self.last_pin:])
+            Xs, T_WCs, Cs = self.get_poses_points(unique_kf_idx[self.last_pin:]) #取相关关键帧的点云与位姿
             img_size = self.frames.last_keyframe().img.shape[-2:]
-            Xs = constrain_points_to_ray(img_size, Xs, K)
-            ii, jj, idx_ii2jj, valid_match, Q_ii2jj = self.prep_two_way_edges()
+            Xs = constrain_points_to_ray(img_size, Xs, K) #将点云约束回像素射线（把 3D 点拉到像素射线上）
+            ii, jj, idx_ii2jj, valid_match, Q_ii2jj = self.prep_two_way_edges() #把 ii/jj 单向边扩成双向，视觉残差对称处理。
 
             # 这些关键帧一旦真正离开窗口，就可以安全地安排写入 H5。
             for iiii in range(self.last_pin,pin):
                 self.frames_to_save.append(iiii)
+            # 选出参与边缘化子图的边（涉及旧边界附近帧的边）。
             marg_mask = torch.logical_and(torch.logical_and(torch.logical_and(ii >= self.last_pin,jj>=self.last_pin),torch.logical_or(ii < pin,jj<pin)),
                                                                               torch.logical_and(ii <= self.last_pin+3,jj <= self.last_pin+3))
             print(ii,jj)
@@ -634,6 +640,7 @@ class FactorGraph:
 
             pose_data = T_WCs.data[:, 0, :]
             pose_data_new = getPosesRel(np.arange(pin,pin+pose_data.shape[0]),pose_data,self.wTcs,self.ss,self.enable_ms)
+            # 对这些边 hessian_pieces → Align2GTSAM_factors，得到视觉因子列表
             aligncore = mast3r_fusion_backends.AlignCoreCalib() #cuda部分的代码实现
             aligncore.init(
                 pose_data_new, #当前线性化点/当前相对位姿
@@ -676,6 +683,8 @@ class FactorGraph:
             marg_graph = gtsam.NonlinearFactorGraph()
             symbols = []
             keys_to_marg = []
+
+            # 建 GTSAM 变量：每个关键帧 X(iii)（Pose3）、S(iii)（尺度）、VI 模式下还有 C（外参）、Z（IMU 位姿）、B（偏置）、V（速度）。
             
             prior_factors = []
             for iii in range(0,T_WCs.shape[0]):
@@ -698,6 +707,7 @@ class FactorGraph:
                     keys_to_marg.append(Z(iii)); keys_to_marg.append(X(iii))
                     keys_to_marg.append(B(iii)); keys_to_marg.append(S(iii))
 
+                # 相邻关键帧间 CombinedImuFactor，预积分来自 imu_pool；若某段间隔过大改用 params_loose。
                 if iii > 0:
                     new_preintegration =  gtsam.PreintegratedCombinedMeasurements(self.params,self.bs[iii-1+pin])
                     dd = self.imu_pool.get_records(self.poses_stamps[self.frames[iii-1+torch.min(ii).item()].frame_id],
@@ -715,7 +725,7 @@ class FactorGraph:
 
                 prior_factors.append(gtsam_unstable.ExPoseConstraintFactor(Z(iii),X(iii),C(iii), gtsam.noiseModel.Diagonal.Sigmas(np.array([1e-4,1e-4,1e-4,1e-4,1e-4,1e-4]))))
 
-                if self.enable_excalib:
+                if self.enable_excalib: #若启用在线外参标定，则对 C(iii) 添加先验。
                     if iii + pin == 0:
                         prior_factors.append(gtsam.PriorFactorPose3(C(iii),gtsam.Pose3(self.Tic), gtsam.noiseModel.Diagonal.Sigmas(np.array([1,1,1,1,1,1])*0.1)))
                 else:
@@ -749,6 +759,9 @@ class FactorGraph:
             pin = new_pin
             self.last_pin = pin
         print('[INFO] marg.',time.time())
+        
+
+        # 上面执行的边缘化过程，可以理解为将之前已经优化好的位姿和尺度信息，通过先验因子的方式，继续作用在当前的优化窗口上。
 
         # pin = 0
         Xs, T_WCs, Cs = self.get_poses_points(unique_kf_idx[pin:])
@@ -950,7 +963,7 @@ class FactorGraph:
         # 求解完成后，把优化结果同步回共享关键帧缓存，供前端与可视化继续使用。
         self.frames.update_T_WCs(T_WCs, unique_kf_idx[pin:])
 
-        if T_WCs.shape[0] == 7:
+        if T_WCs.shape[0] == 7: #满7帧就触发VI初始化
             self.solve_VI_init()
 
 
